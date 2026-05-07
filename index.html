@@ -517,6 +517,38 @@
       }
     }
 
+    /* --- Allocation card cues (repeated manipulation badges) --- */
+    .alloc-cues {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin: 0 0 1rem;
+    }
+    .cue-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      padding: 0.45rem 0.8rem;
+      border-radius: 9px;
+      font-size: 0.82rem;
+      font-weight: 700;
+      letter-spacing: -0.005em;
+      line-height: 1.2;
+    }
+    .cue-tag svg { flex-shrink: 0; }
+    .cue-tag.cue-hot {
+      background: var(--gradient-hot);
+      color: #fff;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      box-shadow: 0 6px 14px -3px rgba(220, 38, 38, 0.32), inset 0 1px 0 rgba(255,255,255,0.18);
+    }
+    .cue-tag.cue-social {
+      background: var(--gradient-warm);
+      color: #fff;
+      box-shadow: 0 6px 14px -3px rgba(245, 158, 11, 0.32), inset 0 1px 0 rgba(255,255,255,0.22);
+    }
+
     /* --- Allocation card --- */
     .alloc-header {
       display: flex;
@@ -1058,13 +1090,13 @@
             Behavioral Economics Pilot
           </span>
           <h1 class="landing-title gradient-text" id="landing-title">A 3-minute investment decision.</h1>
-          <p class="landing-tagline">You'll allocate a hypothetical $1,000 between a safe asset and an ETF. Top portfolios win real money via Venmo.</p>
+          <p class="landing-tagline">You'll allocate a hypothetical $1,000 between a Treasury bond and an ETF. Top portfolios win real money via Venmo.</p>
 
           <div class="stat-grid" role="region" aria-label="Study disclosure">
             <div class="stat-tile safe">
-              <p class="stat-tile-label">Safe Asset</p>
-              <p class="stat-tile-value">+8.00%</p>
-              <p class="stat-tile-text">Guaranteed return</p>
+              <p class="stat-tile-label">Treasury Bond</p>
+              <p class="stat-tile-value">+5.00%</p>
+              <p class="stat-tile-text">Guaranteed · No risk of loss</p>
             </div>
             <div class="stat-tile hlxe">
               <p class="stat-tile-label">HLXE Asset</p>
@@ -1178,6 +1210,22 @@
       </div>
 
       <div class="card">
+        <div class="alloc-cues">
+          <span class="cue-tag cue-hot" id="alloc-cue-hot" style="display:none;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/>
+            </svg>
+            Hot Pick
+          </span>
+          <span class="cue-tag cue-social" id="alloc-cue-social" style="display:none;">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.25" aria-hidden="true">
+              <path d="M2 12 L6 8 L9 11 L14 4" stroke-linecap="round" stroke-linejoin="round" />
+              <path d="M10 4 L14 4 L14 8" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            Most-bought ETF among college investors
+          </span>
+        </div>
+
         <div class="alloc-header">
           <h2>Allocate your $1,000</h2>
           <span class="alloc-target">Target: $1,000</span>
@@ -1188,8 +1236,8 @@
           <div class="allocation-field">
             <label class="allocation-field-label" for="safe-input">
               <span class="alloc-dot safe" aria-hidden="true"></span>
-              Safe
-              <span class="allocation-field-sublabel">+8% guaranteed</span>
+              Treasury bond
+              <span class="allocation-field-sublabel">+5% guaranteed</span>
             </label>
             <div class="input-with-prefix">
               <span class="prefix" aria-hidden="true">$</span>
@@ -1277,9 +1325,9 @@
 
         <div class="breakdown">
           <div class="breakdown-card safe">
-            <p class="breakdown-label">Safe</p>
+            <p class="breakdown-label">Treasury bond</p>
             <p class="breakdown-amount num" id="breakdown-safe-amount">$0.00</p>
-            <p class="breakdown-detail" id="breakdown-safe-detail">$0 &times; 1.08</p>
+            <p class="breakdown-detail" id="breakdown-safe-detail">$0 &times; 1.05</p>
           </div>
           <div class="breakdown-card hlxe">
             <p class="breakdown-label">HLXE</p>
@@ -1471,10 +1519,14 @@
       state.headline_type = (c === 3 || c === 4) ? 'hyped' : 'neutral';
       state.social_proof  = (c === 2 || c === 4) ? 'yes' : 'no';
 
-      document.getElementById('badge-hot').style.display =
-        state.headline_type === 'hyped' ? 'flex' : 'none';
-      document.getElementById('social-proof').style.display =
-        state.social_proof === 'yes' ? 'flex' : 'none';
+      const showHot = state.headline_type === 'hyped';
+      const showSocial = state.social_proof === 'yes';
+
+      document.getElementById('badge-hot').style.display = showHot ? 'flex' : 'none';
+      document.getElementById('alloc-cue-hot').style.display = showHot ? 'inline-flex' : 'none';
+
+      document.getElementById('social-proof').style.display = showSocial ? 'flex' : 'none';
+      document.getElementById('alloc-cue-social').style.display = showSocial ? 'inline-flex' : 'none';
     }
 
     // ---- Screen 1: Begin ----
@@ -1559,7 +1611,7 @@
       const ret = Math.round((Math.random() * 50 - 25) * 100) / 100;
       state.hlxe_return = ret;
 
-      const safeFinal = safe * 1.08;
+      const safeFinal = safe * 1.05;
       const hlxeFinal = hlxe * (1 + ret / 100);
       const finalPortfolio = Math.round((safeFinal + hlxeFinal) * 100) / 100;
       state.final_portfolio = finalPortfolio;
@@ -1599,7 +1651,7 @@
 
       // Breakdown cards
       document.getElementById('breakdown-safe-amount').textContent = '$' + safeFinal.toFixed(2);
-      document.getElementById('breakdown-safe-detail').innerHTML = '$' + safe + ' &times; 1.08';
+      document.getElementById('breakdown-safe-detail').innerHTML = '$' + safe + ' &times; 1.05';
 
       const op = ret >= 0 ? '+' : '−';
       const absRet = Math.abs(ret).toFixed(2);
