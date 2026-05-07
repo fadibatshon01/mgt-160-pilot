@@ -1,0 +1,1766 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Investment Decision Study</title>
+  <style>
+    :root {
+      --bg: #FAFBFC;
+      --bg-tint: #F4F7FA;
+      --surface: #FFFFFF;
+      --text-primary: #0F172A;
+      --text-secondary: #475569;
+      --text-tertiary: #94A3B8;
+      --border: #E2E8F0;
+      --border-strong: #CBD5E1;
+      --accent: #0F766E;
+      --accent-light: #14B8A6;
+      --accent-hover: #115E59;
+      --accent-bg: #ECFDF5;
+      --success: #15803D;
+      --success-light: #22C55E;
+      --danger: #B91C1C;
+      --danger-light: #EF4444;
+      --hot-pick: #DC2626;
+      --warm: #F59E0B;
+
+      --gradient-accent: linear-gradient(135deg, #14B8A6 0%, #0F766E 100%);
+      --gradient-accent-deep: linear-gradient(135deg, #0F766E 0%, #134E4A 100%);
+      --gradient-success: linear-gradient(135deg, #22C55E 0%, #15803D 100%);
+      --gradient-danger: linear-gradient(135deg, #F87171 0%, #B91C1C 100%);
+      --gradient-warm: linear-gradient(135deg, #FBBF24 0%, #F59E0B 100%);
+      --gradient-hot: linear-gradient(135deg, #EF4444 0%, #DC2626 55%, #B91C1C 100%);
+
+      --shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.05), 0 1px 2px rgba(15, 23, 42, 0.03);
+      --shadow-md: 0 8px 24px -8px rgba(15, 23, 42, 0.10), 0 2px 6px rgba(15, 23, 42, 0.04);
+      --shadow-lg: 0 24px 60px -12px rgba(15, 23, 42, 0.14), 0 8px 18px -6px rgba(15, 23, 42, 0.06);
+      --shadow-accent: 0 12px 32px -8px rgba(15, 118, 110, 0.35);
+
+      --radius: 16px;
+      --radius-sm: 10px;
+      --radius-pill: 999px;
+
+      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", system-ui, sans-serif;
+      --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    }
+
+    * { box-sizing: border-box; }
+
+    html { font-size: 16px; }
+    @media (max-width: 600px) { html { font-size: 15px; } }
+
+    body {
+      margin: 0;
+      padding: 0;
+      background: var(--bg);
+      color: var(--text-primary);
+      font-family: var(--font-sans);
+      font-size: 1rem;
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      min-height: 100vh;
+      overflow-x: hidden;
+      position: relative;
+    }
+
+    /* ===== Atmospheric background orbs ===== */
+    .bg-orbs {
+      position: fixed;
+      inset: 0;
+      overflow: hidden;
+      pointer-events: none;
+      z-index: 0;
+    }
+    .bg-orbs::before,
+    .bg-orbs::after {
+      content: '';
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(110px);
+      opacity: 0.4;
+    }
+    .bg-orbs::before {
+      width: 540px; height: 540px;
+      background: radial-gradient(circle, #5EEAD4 0%, transparent 70%);
+      top: -200px; left: -180px;
+    }
+    .bg-orbs::after {
+      width: 480px; height: 480px;
+      background: radial-gradient(circle, #FCD34D 0%, transparent 70%);
+      bottom: -180px; right: -160px;
+      opacity: 0.28;
+    }
+
+    /* ===== Brand header ===== */
+    .brand-header {
+      position: relative;
+      z-index: 2;
+      padding: 1.25rem 1.5rem 0;
+      max-width: 760px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+    }
+    .brand-mark {
+      width: 32px; height: 32px;
+      border-radius: 9px;
+      background: var(--gradient-accent);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      box-shadow: 0 6px 18px -4px rgba(15, 118, 110, 0.45), inset 0 1px 0 rgba(255,255,255,0.25);
+    }
+    .brand-text {
+      display: flex;
+      flex-direction: column;
+      line-height: 1;
+    }
+    .brand-text-title {
+      font-size: 0.85rem;
+      font-weight: 700;
+      letter-spacing: -0.005em;
+      color: var(--text-primary);
+    }
+    .brand-text-sub {
+      font-size: 0.7rem;
+      font-weight: 500;
+      color: var(--text-tertiary);
+      margin-top: 0.15rem;
+    }
+    @media (max-width: 600px) {
+      .brand-header { padding: 1rem 1rem 0; }
+    }
+
+    /* ===== Container ===== */
+    .container {
+      position: relative;
+      z-index: 1;
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 1.5rem 1.5rem 4rem;
+    }
+    @media (max-width: 600px) {
+      .container { padding: 1rem 1rem 3rem; }
+    }
+
+    /* ===== Screens & transitions ===== */
+    .screen { display: none; }
+    .screen.active {
+      display: block;
+      animation: screen-enter 380ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    @keyframes screen-enter {
+      from { opacity: 0; transform: translateY(14px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ===== Cards ===== */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.75rem;
+      margin-bottom: 1.25rem;
+      box-shadow: var(--shadow-sm);
+    }
+    .card.elevated { box-shadow: var(--shadow-lg); }
+    .card.tinted {
+      background: linear-gradient(180deg, #FFFFFF 0%, #FAFBFC 100%);
+    }
+    @media (max-width: 600px) {
+      .card { padding: 1.25rem; margin-bottom: 1rem; }
+    }
+
+    /* ===== Typography ===== */
+    h1 {
+      font-size: 1.875rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      line-height: 1.2;
+      margin: 0 0 0.5rem;
+    }
+    h2 {
+      font-size: 1.25rem;
+      font-weight: 700;
+      letter-spacing: -0.012em;
+      line-height: 1.3;
+      margin: 0 0 0.75rem;
+    }
+    p { margin: 0 0 0.75rem; }
+    .text-secondary { color: var(--text-secondary); }
+    .text-tertiary { color: var(--text-tertiary); }
+    .num { font-variant-numeric: tabular-nums; }
+
+    .gradient-text {
+      background: var(--gradient-accent-deep);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+
+    /* ===== Buttons ===== */
+    button {
+      font-family: inherit;
+      font-size: 1rem;
+      font-weight: 600;
+      background: var(--gradient-accent);
+      color: #fff;
+      border: none;
+      padding: 0.95rem 1.5rem;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      min-height: 50px;
+      letter-spacing: -0.005em;
+      box-shadow: var(--shadow-accent);
+      transition: transform 100ms ease, box-shadow 150ms ease, opacity 100ms ease;
+    }
+    button:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 16px 36px -8px rgba(15, 118, 110, 0.4);
+    }
+    button:active:not(:disabled) { transform: translateY(0); }
+    button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+    button.full { width: 100%; display: block; }
+    button.fixed { width: 220px; }
+    @media (max-width: 600px) {
+      button.fixed { width: 100%; }
+    }
+
+    /* ===== Focus states ===== */
+    button:focus-visible,
+    input:focus-visible,
+    .segments input:focus-visible + label {
+      outline: 2px solid var(--accent);
+      outline-offset: 3px;
+    }
+    input:focus {
+      border-color: var(--accent);
+      outline: none;
+      box-shadow: 0 0 0 4px rgba(15, 118, 110, 0.14);
+    }
+
+    /* ============================================================
+       SCREEN 1: LANDING
+       ============================================================ */
+    .landing { max-width: 560px; margin: 0 auto; }
+    .landing-eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--accent);
+      background: var(--accent-bg);
+      padding: 0.35rem 0.75rem;
+      border-radius: var(--radius-pill);
+      margin-bottom: 1rem;
+    }
+    .landing-title {
+      font-size: 2.25rem;
+      letter-spacing: -0.025em;
+      line-height: 1.1;
+      margin-bottom: 0.625rem;
+    }
+    .landing-tagline {
+      color: var(--text-secondary);
+      font-size: 1.0625rem;
+      margin-bottom: 1.75rem;
+    }
+    .stat-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.75rem;
+      margin: 0 0 1.5rem;
+    }
+    @media (max-width: 480px) {
+      .stat-grid { grid-template-columns: 1fr; }
+    }
+    .stat-tile {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1rem 1.1rem;
+      position: relative;
+      overflow: hidden;
+    }
+    .stat-tile::before {
+      content: '';
+      position: absolute;
+      left: 0; top: 0; bottom: 0;
+      width: 3px;
+    }
+    .stat-tile.safe::before { background: var(--gradient-accent); }
+    .stat-tile.hlxe::before { background: var(--gradient-warm); }
+    .stat-tile.prizes::before { background: var(--gradient-hot); }
+    .stat-tile.outcome::before { background: linear-gradient(135deg, #818CF8, #6366F1); }
+    .stat-tile-label {
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--text-tertiary);
+      margin: 0 0 0.3rem;
+    }
+    .stat-tile-value {
+      font-size: 1.0625rem;
+      font-weight: 700;
+      color: var(--text-primary);
+      letter-spacing: -0.01em;
+      margin: 0 0 0.2rem;
+      line-height: 1.25;
+    }
+    .stat-tile-text {
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+      margin: 0;
+      line-height: 1.4;
+    }
+
+    /* ============================================================
+       SCREEN 2: LISTING + ALLOCATION
+       ============================================================ */
+
+    /* --- HOT PICK banner (top of listing) --- */
+    .hot-banner {
+      display: flex;
+      align-items: center;
+      gap: 0.85rem;
+      background: var(--gradient-hot);
+      color: #fff;
+      font-size: 1.05rem;
+      font-weight: 800;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      padding: 1rem 1.25rem;
+      border-radius: var(--radius-sm);
+      margin: 0 0 1.25rem;
+      box-shadow:
+        0 12px 28px -8px rgba(220, 38, 38, 0.35),
+        0 2px 4px rgba(220, 38, 38, 0.15),
+        inset 0 1px 0 rgba(255, 255, 255, 0.22);
+      position: relative;
+      overflow: hidden;
+    }
+    .hot-banner::after {
+      content: '';
+      position: absolute;
+      top: 0; bottom: 0; left: 50%; right: 0;
+      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.08));
+      pointer-events: none;
+    }
+    .hot-icon-wrap {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 38px; height: 38px;
+      background: rgba(255, 255, 255, 0.2);
+      border-radius: 50%;
+      flex-shrink: 0;
+      position: relative;
+      z-index: 1;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+    }
+    .hot-text { position: relative; z-index: 1; }
+
+    /* --- Listing meta --- */
+    .meta-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 0.85rem;
+      gap: 0.75rem;
+    }
+    .ticker {
+      display: inline-flex;
+      align-items: center;
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      background: var(--gradient-accent-deep);
+      color: #fff;
+      padding: 0.3rem 0.7rem;
+      border-radius: 7px;
+      box-shadow: 0 4px 12px -3px rgba(15, 118, 110, 0.4);
+    }
+    .category {
+      color: var(--text-tertiary);
+      font-size: 0.85rem;
+      font-weight: 500;
+    }
+    .fund-name {
+      font-size: 1.75rem;
+      font-weight: 700;
+      letter-spacing: -0.025em;
+      margin: 0 0 0.3rem;
+      line-height: 1.15;
+    }
+    .tagline {
+      color: var(--text-secondary);
+      font-size: 1rem;
+      margin: 0;
+    }
+
+    /* --- Social proof callout --- */
+    .social-callout {
+      display: flex;
+      align-items: center;
+      gap: 0.95rem;
+      background: linear-gradient(135deg, #FFFBEB 0%, #FEF3C7 100%);
+      border: 1px solid #FCD34D;
+      color: var(--text-primary);
+      padding: 1rem 1.15rem;
+      border-radius: var(--radius-sm);
+      margin-top: 1.1rem;
+      box-shadow: 0 8px 24px -8px rgba(180, 83, 9, 0.18);
+    }
+    .social-icon-wrap {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 40px; height: 40px;
+      background: var(--gradient-warm);
+      color: #fff;
+      border-radius: 50%;
+      flex-shrink: 0;
+      box-shadow: 0 6px 16px -3px rgba(245, 158, 11, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+    }
+    .social-callout-text { flex: 1; min-width: 0; }
+    .social-callout-text strong {
+      display: block;
+      font-size: 1rem;
+      font-weight: 700;
+      letter-spacing: -0.005em;
+      margin: 0 0 0.15rem;
+      color: var(--text-primary);
+      line-height: 1.3;
+    }
+    .social-callout-text span {
+      font-size: 0.88rem;
+      color: #92400E;
+      font-weight: 500;
+    }
+
+    /* --- Performance section with sparkline --- */
+    .perf-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 1rem 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .perf-stats { display: flex; gap: 1.25rem; flex-wrap: wrap; }
+    .perf-stat { display: flex; flex-direction: column; gap: 0.15rem; }
+    .perf-stat-label {
+      font-size: 0.7rem;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: var(--text-tertiary);
+    }
+    .perf-stat-value {
+      font-size: 0.95rem;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: -0.005em;
+    }
+    .perf-stat-value.up { color: var(--success); }
+    .perf-stat-value.down { color: var(--danger); }
+    .sparkline {
+      flex-shrink: 0;
+      width: 110px; height: 36px;
+    }
+    @media (max-width: 480px) {
+      .sparkline { width: 80px; height: 28px; }
+      .perf-stats { gap: 0.85rem; }
+    }
+
+    /* --- Listing info list --- */
+    .info-list {
+      margin: 1.5rem 0 0;
+      padding: 0;
+    }
+    .info-row {
+      display: grid;
+      grid-template-columns: minmax(160px, 1fr) 1.6fr;
+      gap: 1rem;
+      padding: 0.95rem 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .info-row:last-child { border-bottom: none; }
+    .info-row dt {
+      color: var(--text-secondary);
+      font-weight: 600;
+      font-size: 0.9rem;
+    }
+    .info-row dd {
+      margin: 0;
+      color: var(--text-primary);
+      font-size: 0.95rem;
+    }
+    @media (max-width: 600px) {
+      .info-row {
+        grid-template-columns: 1fr;
+        gap: 0.25rem;
+        padding: 0.85rem 0;
+      }
+    }
+
+    /* --- Allocation card --- */
+    .alloc-header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-bottom: 0.4rem;
+    }
+    .alloc-header h2 { margin: 0; }
+    .alloc-target {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text-tertiary);
+      font-variant-numeric: tabular-nums;
+    }
+    .alloc-sub {
+      color: var(--text-secondary);
+      font-size: 0.95rem;
+      margin-bottom: 1.25rem;
+    }
+    .allocation-row {
+      display: flex;
+      gap: 0.85rem;
+      margin-bottom: 1rem;
+    }
+    @media (max-width: 600px) {
+      .allocation-row { flex-direction: column; }
+    }
+    .allocation-field { flex: 1; }
+    .allocation-field-label {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      margin-bottom: 0.5rem;
+    }
+    .alloc-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .alloc-dot.safe { background: var(--gradient-accent); }
+    .alloc-dot.hlxe { background: var(--gradient-warm); }
+    .allocation-field-sublabel {
+      font-size: 0.75rem;
+      color: var(--text-tertiary);
+      font-weight: 500;
+      margin-left: auto;
+    }
+    .input-with-prefix { position: relative; }
+    .input-with-prefix .prefix {
+      position: absolute;
+      left: 14px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--text-tertiary);
+      font-weight: 500;
+      font-size: 1.25rem;
+      pointer-events: none;
+    }
+    .input-with-prefix input {
+      width: 100%;
+      font-family: inherit;
+      font-size: 1.5rem;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: -0.01em;
+      color: var(--text-primary);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 0.8rem 0.95rem 0.8rem 2.2rem;
+      min-height: 60px;
+      transition: border-color 120ms ease, box-shadow 120ms ease;
+    }
+
+    /* Allocation visual split bar */
+    .split-bar {
+      display: flex;
+      width: 100%;
+      height: 8px;
+      background: var(--bg-tint);
+      border-radius: var(--radius-pill);
+      overflow: hidden;
+      margin: 0.4rem 0 1rem;
+    }
+    .split-bar-segment {
+      height: 100%;
+      transition: width 200ms ease;
+    }
+    .split-bar-segment.safe { background: var(--gradient-accent); }
+    .split-bar-segment.hlxe { background: var(--gradient-warm); }
+
+    .total-display {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 1rem;
+      font-size: 0.95rem;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+      color: var(--text-secondary);
+      padding: 0.8rem 1rem;
+      background: var(--bg-tint);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      margin-bottom: 1.25rem;
+    }
+    .total-display .indicator {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--text-tertiary);
+    }
+    .total-display.valid {
+      color: var(--success);
+      border-color: rgba(21, 128, 61, 0.3);
+      background: rgba(21, 128, 61, 0.06);
+    }
+    .total-display.valid .indicator { color: var(--success); }
+    .total-display.invalid {
+      color: var(--danger);
+      border-color: rgba(185, 28, 28, 0.3);
+      background: rgba(185, 28, 28, 0.06);
+    }
+    .total-display.invalid .indicator { color: var(--danger); }
+
+    /* ============================================================
+       SCREEN 3: CONFIDENCE
+       ============================================================ */
+    .pre-outcome-eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--accent);
+      background: var(--accent-bg);
+      padding: 0.35rem 0.75rem;
+      border-radius: var(--radius-pill);
+      margin-bottom: 1rem;
+    }
+    .pre-outcome-pulse {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      animation: pulse-dot 1.6s ease-in-out infinite;
+    }
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 0.4; transform: scale(0.85); }
+      50% { opacity: 1; transform: scale(1); }
+    }
+    .confidence-prompt {
+      font-size: 1.625rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      line-height: 1.25;
+      margin: 0 0 0.4rem;
+    }
+    .pre-outcome-intro {
+      color: var(--text-secondary);
+      font-size: 1rem;
+      margin: 0 0 1.5rem;
+    }
+
+    /* ============================================================
+       SCREEN 4: OUTCOME
+       ============================================================ */
+    .outcome-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 2rem;
+      box-shadow: var(--shadow-lg);
+      position: relative;
+      overflow: hidden;
+    }
+    .outcome-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 4px;
+      background: var(--gradient-accent);
+      transition: background 200ms ease;
+    }
+    .outcome-card.positive::before { background: var(--gradient-success); }
+    .outcome-card.negative::before { background: var(--gradient-danger); }
+    @media (max-width: 600px) {
+      .outcome-card { padding: 1.5rem; }
+    }
+
+    .outcome-eyebrow {
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--text-tertiary);
+      margin: 0 0 0.4rem;
+    }
+    .return-headline {
+      font-size: 3.5rem;
+      font-weight: 800;
+      letter-spacing: -0.035em;
+      font-variant-numeric: tabular-nums;
+      margin: 0;
+      line-height: 1;
+      background: var(--gradient-accent-deep);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      transition: background 200ms ease;
+    }
+    .return-headline.positive {
+      background: var(--gradient-success);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+    .return-headline.negative {
+      background: var(--gradient-danger);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+    @media (max-width: 600px) {
+      .return-headline { font-size: 2.75rem; }
+    }
+    .outcome-divider {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 1.75rem 0 1.5rem;
+    }
+    .portfolio-block { display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+    .portfolio-value {
+      font-size: 2.5rem;
+      font-weight: 800;
+      letter-spacing: -0.025em;
+      font-variant-numeric: tabular-nums;
+      color: var(--text-primary);
+      margin: 0;
+      line-height: 1.05;
+    }
+    .portfolio-delta {
+      font-size: 0.95rem;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      padding: 0.3rem 0.65rem;
+      border-radius: var(--radius-pill);
+    }
+    .portfolio-delta.positive { background: rgba(21, 128, 61, 0.1); color: var(--success); }
+    .portfolio-delta.negative { background: rgba(185, 28, 28, 0.1); color: var(--danger); }
+    @media (max-width: 600px) {
+      .portfolio-value { font-size: 2rem; }
+    }
+
+    .breakdown {
+      margin-top: 1.5rem;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.85rem;
+    }
+    @media (max-width: 480px) {
+      .breakdown { grid-template-columns: 1fr; }
+    }
+    .breakdown-card {
+      background: var(--bg-tint);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 0.95rem 1.1rem;
+      position: relative;
+      overflow: hidden;
+    }
+    .breakdown-card::before {
+      content: '';
+      position: absolute;
+      left: 0; top: 0; bottom: 0;
+      width: 3px;
+    }
+    .breakdown-card.safe::before { background: var(--gradient-accent); }
+    .breakdown-card.hlxe::before { background: var(--gradient-warm); }
+    .breakdown-label {
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--text-tertiary);
+      margin: 0 0 0.3rem;
+    }
+    .breakdown-amount {
+      font-size: 1.25rem;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: -0.012em;
+      margin: 0 0 0.15rem;
+    }
+    .breakdown-detail {
+      font-size: 0.78rem;
+      color: var(--text-secondary);
+      font-variant-numeric: tabular-nums;
+      margin: 0;
+    }
+
+    /* ===== Fieldsets / segmented controls ===== */
+    fieldset {
+      border: none;
+      padding: 0;
+      margin: 0 0 1.75rem;
+    }
+    fieldset:last-of-type { margin-bottom: 0; }
+    legend {
+      font-size: 1rem;
+      font-weight: 700;
+      letter-spacing: -0.005em;
+      color: var(--text-primary);
+      margin-bottom: 0.85rem;
+      padding: 0;
+    }
+    .scale-labels {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.78rem;
+      color: var(--text-tertiary);
+      margin-top: 0.6rem;
+    }
+    .segments {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+    .segments input[type="radio"] {
+      position: absolute;
+      opacity: 0;
+      width: 1px; height: 1px;
+      pointer-events: none;
+    }
+    .segments label {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 48px;
+      min-height: 48px;
+      padding: 0 0.95rem;
+      background: var(--surface);
+      color: var(--text-secondary);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease, transform 80ms ease, box-shadow 120ms ease;
+    }
+    .segments label:hover {
+      border-color: var(--border-strong);
+      transform: translateY(-1px);
+    }
+    .segments input[type="radio"]:checked + label {
+      background: var(--gradient-accent);
+      color: #fff;
+      border-color: transparent;
+      box-shadow: 0 6px 16px -4px rgba(15, 118, 110, 0.4);
+      transform: translateY(-1px);
+    }
+    .segments.large label { min-width: 56px; min-height: 56px; font-size: 1.05rem; }
+    .segments.wide label { min-width: 100px; }
+
+    /* ============================================================
+       SCREEN 5: DEMOGRAPHICS
+       ============================================================ */
+    .demographics-intro {
+      color: var(--text-secondary);
+      font-size: 1rem;
+      margin: 0 0 1.75rem;
+    }
+    .age-input {
+      width: 160px;
+      font-family: inherit;
+      font-size: 1.05rem;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+      color: var(--text-primary);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 0.7rem 0.95rem;
+      min-height: 48px;
+    }
+
+    /* ============================================================
+       SCREEN 6: VENMO
+       ============================================================ */
+    .venmo-narrow { max-width: 520px; margin: 0 auto; }
+    .prize-tiers {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0.6rem;
+      margin: 1rem 0 1.5rem;
+    }
+    .prize-tier {
+      text-align: center;
+      padding: 0.95rem 0.5rem 1rem;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      position: relative;
+      overflow: hidden;
+    }
+    .prize-tier-rank {
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-tertiary);
+      margin: 0 0 0.4rem;
+    }
+    .prize-tier-amount {
+      font-size: 1.5rem;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      margin: 0;
+    }
+    .prize-tier.first {
+      background: linear-gradient(180deg, #FFFBEB 0%, #FEF3C7 100%);
+      border-color: #FCD34D;
+    }
+    .prize-tier.first .prize-tier-amount { color: #B45309; }
+    .prize-tier.second {
+      background: linear-gradient(180deg, #F8FAFC 0%, #F1F5F9 100%);
+    }
+    .prize-tier.second .prize-tier-amount { color: #475569; }
+    .prize-tier.third {
+      background: linear-gradient(180deg, #FFF7ED 0%, #FFEDD5 100%);
+      border-color: #FDBA74;
+    }
+    .prize-tier.third .prize-tier-amount { color: #9A3412; }
+
+    .venmo-input-wrap { margin-bottom: 1.25rem; }
+    .venmo-label {
+      display: block;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      margin-bottom: 0.4rem;
+    }
+    .venmo-input-wrap .input-with-prefix .prefix {
+      font-size: 1.15rem;
+      font-weight: 500;
+    }
+    .venmo-input-wrap input {
+      width: 100%;
+      font-family: inherit;
+      font-size: 1.05rem;
+      color: var(--text-primary);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 0.85rem 0.95rem 0.85rem 2.1rem;
+      min-height: 52px;
+      font-weight: 500;
+    }
+    .error-message {
+      background: rgba(185, 28, 28, 0.06);
+      color: var(--danger);
+      border: 1px solid rgba(185, 28, 28, 0.25);
+      border-radius: var(--radius-sm);
+      padding: 0.85rem 1rem;
+      font-size: 0.9rem;
+      margin-bottom: 1rem;
+    }
+
+    /* ============================================================
+       SCREEN 7: THANKS
+       ============================================================ */
+    .thanks {
+      text-align: center;
+      max-width: 520px;
+      margin: 1rem auto 0;
+      padding: 0 1rem;
+    }
+    .thanks-mark {
+      width: 96px; height: 96px;
+      border-radius: 50%;
+      background: var(--gradient-success);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      margin: 0 auto 1.5rem;
+      box-shadow: 0 20px 50px -12px rgba(34, 197, 94, 0.45), inset 0 1px 0 rgba(255,255,255,0.25);
+      animation: thanks-pop 600ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+    }
+    @keyframes thanks-pop {
+      0% { transform: scale(0.4); opacity: 0; }
+      100% { transform: scale(1); opacity: 1; }
+    }
+    .thanks h1 {
+      font-size: 2rem;
+      letter-spacing: -0.025em;
+      margin-bottom: 0.6rem;
+    }
+    .thanks p {
+      color: var(--text-secondary);
+      font-size: 1.0625rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="bg-orbs" aria-hidden="true"></div>
+
+  <header class="brand-header">
+    <span class="brand-mark" aria-hidden="true">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 17l6-6 4 4 8-8" />
+        <path d="M14 7h7v7" />
+      </svg>
+    </span>
+    <span class="brand-text">
+      <span class="brand-text-title">MGT 160</span>
+      <span class="brand-text-sub">Investment Decision Study</span>
+    </span>
+  </header>
+
+  <div class="container">
+
+    <!-- ===================== SCREEN 1: LANDING ===================== -->
+    <section class="screen active" id="screen-1" aria-labelledby="landing-title">
+      <div class="landing">
+        <div class="card elevated">
+          <span class="landing-eyebrow">
+            <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+              <circle cx="8" cy="8" r="3"/>
+            </svg>
+            Behavioral Economics Pilot
+          </span>
+          <h1 class="landing-title gradient-text" id="landing-title">A 3-minute investment decision.</h1>
+          <p class="landing-tagline">You'll allocate a hypothetical $1,000 between a safe asset and an ETF. Top portfolios win real money via Venmo.</p>
+
+          <div class="stat-grid" role="region" aria-label="Study disclosure">
+            <div class="stat-tile safe">
+              <p class="stat-tile-label">Safe Asset</p>
+              <p class="stat-tile-value">+8.00%</p>
+              <p class="stat-tile-text">Guaranteed return</p>
+            </div>
+            <div class="stat-tile hlxe">
+              <p class="stat-tile-label">HLXE Asset</p>
+              <p class="stat-tile-value">&minus;25% to +25%</p>
+              <p class="stat-tile-text">Random uniform draw</p>
+            </div>
+            <div class="stat-tile prizes">
+              <p class="stat-tile-label">Prizes (Top 3)</p>
+              <p class="stat-tile-value">$20 / $15 / $5</p>
+              <p class="stat-tile-text">Paid via Venmo</p>
+            </div>
+            <div class="stat-tile outcome">
+              <p class="stat-tile-label">Result</p>
+              <p class="stat-tile-value">Live</p>
+              <p class="stat-tile-text">Calculated on submit</p>
+            </div>
+          </div>
+
+          <button id="btn-begin" class="fixed">Begin study</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== SCREEN 2: LISTING + ALLOCATION ===================== -->
+    <section class="screen" id="screen-2" aria-labelledby="fund-name">
+
+      <div class="card elevated">
+        <div class="hot-banner" id="badge-hot" style="display:none;" role="note">
+          <span class="hot-icon-wrap">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/>
+            </svg>
+          </span>
+          <span class="hot-text">Hot Pick</span>
+        </div>
+
+        <div class="meta-row">
+          <span class="ticker">HLXE</span>
+          <span class="category">Renewable Energy ETF</span>
+        </div>
+
+        <h1 class="fund-name" id="fund-name">Helix Renewable Energy ETF</h1>
+        <p class="tagline">Diversified mid-cap renewable energy fund</p>
+
+        <div class="social-callout" id="social-proof" style="display:none;" role="note">
+          <span class="social-icon-wrap">
+            <svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.25" aria-hidden="true">
+              <path d="M2 12 L6 8 L9 11 L14 4" stroke-linecap="round" stroke-linejoin="round" />
+              <path d="M10 4 L14 4 L14 8" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </span>
+          <div class="social-callout-text">
+            <strong>Most-bought ETF among college investors</strong>
+            <span>this month</span>
+          </div>
+        </div>
+
+        <div class="perf-row">
+          <div class="perf-stats">
+            <div class="perf-stat">
+              <span class="perf-stat-label">3-yr</span>
+              <span class="perf-stat-value up">+14.2%</span>
+            </div>
+            <div class="perf-stat">
+              <span class="perf-stat-label">Best year</span>
+              <span class="perf-stat-value up">+21.4%</span>
+            </div>
+            <div class="perf-stat">
+              <span class="perf-stat-label">Worst year</span>
+              <span class="perf-stat-value down">&minus;7.8%</span>
+            </div>
+          </div>
+          <svg class="sparkline" viewBox="0 0 110 36" preserveAspectRatio="none" aria-hidden="true">
+            <defs>
+              <linearGradient id="sparkFill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="#14B8A6" stop-opacity="0.35"/>
+                <stop offset="100%" stop-color="#14B8A6" stop-opacity="0"/>
+              </linearGradient>
+            </defs>
+            <path
+              d="M0,28 L14,24 L28,26 L42,18 L56,20 L70,12 L84,14 L98,6 L110,8 L110,36 L0,36 Z"
+              fill="url(#sparkFill)" />
+            <path
+              d="M0,28 L14,24 L28,26 L42,18 L56,20 L70,12 L84,14 L98,6 L110,8"
+              fill="none" stroke="#0F766E" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </div>
+
+        <dl class="info-list">
+          <div class="info-row">
+            <dt>Expense Ratio</dt>
+            <dd>0.45% annual expense ratio.</dd>
+          </div>
+          <div class="info-row">
+            <dt>Top Holdings</dt>
+            <dd>Aurora Solar Inc., Meridian Wind Power, GridVolt Storage, NovaGen Energy, Helios Photonics.</dd>
+          </div>
+          <div class="info-row">
+            <dt>Risk Profile</dt>
+            <dd>Moderate-to-high volatility. Suitable for long-term investors with 5+ year horizon.</dd>
+          </div>
+          <div class="info-row">
+            <dt>Analyst Ratings</dt>
+            <dd>6 Buy / 3 Hold / 1 Sell (10 analysts surveyed).</dd>
+          </div>
+          <div class="info-row">
+            <dt>Management Team</dt>
+            <dd>Fund managed by Sarah Chen, CFA, who has 12 years of experience in clean energy investing and previously managed the Pacific Sustainability Fund.</dd>
+          </div>
+        </dl>
+      </div>
+
+      <div class="card">
+        <div class="alloc-header">
+          <h2>Allocate your $1,000</h2>
+          <span class="alloc-target">Target: $1,000</span>
+        </div>
+        <p class="alloc-sub">Drag, type, or step the values. Both amounts must sum to exactly $1,000.</p>
+
+        <div class="allocation-row">
+          <div class="allocation-field">
+            <label class="allocation-field-label" for="safe-input">
+              <span class="alloc-dot safe" aria-hidden="true"></span>
+              Safe
+              <span class="allocation-field-sublabel">+8% guaranteed</span>
+            </label>
+            <div class="input-with-prefix">
+              <span class="prefix" aria-hidden="true">$</span>
+              <input type="number" id="safe-input" min="0" max="1000" step="1" inputmode="numeric" aria-describedby="total-display" />
+            </div>
+          </div>
+          <div class="allocation-field">
+            <label class="allocation-field-label" for="hlxe-input">
+              <span class="alloc-dot hlxe" aria-hidden="true"></span>
+              HLXE
+              <span class="allocation-field-sublabel">&minus;25% to +25%</span>
+            </label>
+            <div class="input-with-prefix">
+              <span class="prefix" aria-hidden="true">$</span>
+              <input type="number" id="hlxe-input" min="0" max="1000" step="1" inputmode="numeric" aria-describedby="total-display" />
+            </div>
+          </div>
+        </div>
+
+        <div class="split-bar" aria-hidden="true">
+          <div class="split-bar-segment safe" id="split-safe" style="width:0%;"></div>
+          <div class="split-bar-segment hlxe" id="split-hlxe" style="width:0%;"></div>
+        </div>
+
+        <div class="total-display" id="total-display" aria-live="polite">
+          <span id="total-text">Total: $0 / $1,000</span>
+          <span class="indicator" id="total-indicator">Pending</span>
+        </div>
+
+        <button id="btn-submit-allocation" class="full" disabled aria-disabled="true">Submit Allocation</button>
+      </div>
+    </section>
+
+    <!-- ===================== SCREEN 3: CONFIDENCE (PRE-OUTCOME) ===================== -->
+    <section class="screen" id="screen-3" aria-labelledby="confidence-heading">
+      <div class="card elevated">
+        <span class="pre-outcome-eyebrow">
+          <span class="pre-outcome-pulse" aria-hidden="true"></span>
+          Decision locked
+        </span>
+        <h2 class="confidence-prompt" id="confidence-heading">Before we reveal the result&hellip;</h2>
+        <p class="pre-outcome-intro">Take a beat to reflect on the choice you just made.</p>
+
+        <fieldset>
+          <legend>How confident are you in your allocation?</legend>
+          <div class="segments large" id="confidence-group">
+            <input type="radio" id="conf-1" name="confidence" value="1" />
+            <label for="conf-1">1</label>
+            <input type="radio" id="conf-2" name="confidence" value="2" />
+            <label for="conf-2">2</label>
+            <input type="radio" id="conf-3" name="confidence" value="3" />
+            <label for="conf-3">3</label>
+            <input type="radio" id="conf-4" name="confidence" value="4" />
+            <label for="conf-4">4</label>
+            <input type="radio" id="conf-5" name="confidence" value="5" />
+            <label for="conf-5">5</label>
+          </div>
+          <div class="scale-labels">
+            <span>Not at all confident</span>
+            <span>Very confident</span>
+          </div>
+        </fieldset>
+
+        <div style="margin-top: 1.75rem;">
+          <button id="btn-confidence-continue" class="full" disabled aria-disabled="true">Reveal Result</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== SCREEN 4: OUTCOME ===================== -->
+    <section class="screen" id="screen-4" aria-labelledby="outcome-heading">
+      <div class="outcome-card" id="outcome-card">
+        <h2 id="outcome-heading" style="position:absolute;left:-9999px;">Your outcome</h2>
+
+        <p class="outcome-eyebrow">HLXE Return</p>
+        <p class="return-headline num" id="return-headline">+0.00%</p>
+
+        <hr class="outcome-divider" />
+
+        <p class="outcome-eyebrow">Final Portfolio</p>
+        <div class="portfolio-block">
+          <p class="portfolio-value num" id="final-portfolio">$0.00</p>
+          <span class="portfolio-delta" id="portfolio-delta">+$0.00</span>
+        </div>
+
+        <div class="breakdown">
+          <div class="breakdown-card safe">
+            <p class="breakdown-label">Safe</p>
+            <p class="breakdown-amount num" id="breakdown-safe-amount">$0.00</p>
+            <p class="breakdown-detail" id="breakdown-safe-detail">$0 &times; 1.08</p>
+          </div>
+          <div class="breakdown-card hlxe">
+            <p class="breakdown-label">HLXE</p>
+            <p class="breakdown-amount num" id="breakdown-hlxe-amount">$0.00</p>
+            <p class="breakdown-detail" id="breakdown-hlxe-detail">$0 &times; 1.0000</p>
+          </div>
+        </div>
+
+        <div style="margin-top: 1.75rem;">
+          <button id="btn-outcome-continue" class="full">Continue</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== SCREEN 5: DEMOGRAPHICS ===================== -->
+    <section class="screen" id="screen-5" aria-labelledby="demographics-heading">
+      <div class="card elevated">
+        <span class="landing-eyebrow">Final step</span>
+        <h2 id="demographics-heading" style="font-size:1.625rem; letter-spacing:-0.02em;">A few quick questions about you</h2>
+        <p class="demographics-intro">These help us analyze the results. Stored anonymously.</p>
+
+        <fieldset>
+          <legend><label for="age-input" style="font:inherit;">Age</label></legend>
+          <input type="number" id="age-input" class="age-input" min="1" step="1" inputmode="numeric" placeholder="e.g. 20" />
+        </fieldset>
+
+        <fieldset>
+          <legend>Gender</legend>
+          <div class="segments wide" id="gender-group">
+            <input type="radio" id="gender-woman" name="gender" value="woman" />
+            <label for="gender-woman">Woman</label>
+            <input type="radio" id="gender-man" name="gender" value="man" />
+            <label for="gender-man">Man</label>
+            <input type="radio" id="gender-nb" name="gender" value="non_binary_or_other" />
+            <label for="gender-nb">Non-binary or another gender</label>
+            <input type="radio" id="gender-na" name="gender" value="prefer_not_to_say" />
+            <label for="gender-na">Prefer not to say</label>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Year in school</legend>
+          <div class="segments" id="year-group">
+            <input type="radio" id="year-fr" name="year" value="freshman" />
+            <label for="year-fr">Freshman</label>
+            <input type="radio" id="year-so" name="year" value="sophomore" />
+            <label for="year-so">Sophomore</label>
+            <input type="radio" id="year-jr" name="year" value="junior" />
+            <label for="year-jr">Junior</label>
+            <input type="radio" id="year-sr" name="year" value="senior" />
+            <label for="year-sr">Senior</label>
+            <input type="radio" id="year-gr" name="year" value="graduate" />
+            <label for="year-gr">Graduate</label>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Major area</legend>
+          <div class="segments" id="major-group">
+            <input type="radio" id="major-be" name="major" value="business_econ" />
+            <label for="major-be">Business/Econ</label>
+            <input type="radio" id="major-stem" name="major" value="stem" />
+            <label for="major-stem">STEM</label>
+            <input type="radio" id="major-hum" name="major" value="humanities" />
+            <label for="major-hum">Humanities</label>
+            <input type="radio" id="major-ss" name="major" value="social_sciences" />
+            <label for="major-ss">Social Sciences</label>
+            <input type="radio" id="major-other" name="major" value="other" />
+            <label for="major-other">Other</label>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Have you ever invested real money in stocks, ETFs, or crypto?</legend>
+          <div class="segments wide" id="prior-group">
+            <input type="radio" id="prior-yes" name="prior" value="yes" />
+            <label for="prior-yes">Yes</label>
+            <input type="radio" id="prior-no" name="prior" value="no" />
+            <label for="prior-no">No</label>
+          </div>
+        </fieldset>
+
+        <div style="margin-top: 1.75rem;">
+          <button id="btn-demographics-continue" class="full" disabled aria-disabled="true">Continue</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== SCREEN 6: VENMO ===================== -->
+    <section class="screen" id="screen-6" aria-labelledby="venmo-heading">
+      <div class="venmo-narrow">
+        <div class="card elevated">
+          <span class="landing-eyebrow">One last thing</span>
+          <h2 id="venmo-heading" style="font-size:1.625rem; letter-spacing:-0.02em;">Claim your shot at the prize</h2>
+          <p class="text-secondary" style="font-size: 1rem; margin-bottom: 0.4rem;">
+            Top 3 portfolios win Venmo prizes:
+          </p>
+
+          <div class="prize-tiers" aria-hidden="true">
+            <div class="prize-tier first">
+              <p class="prize-tier-rank">1st</p>
+              <p class="prize-tier-amount">$20</p>
+            </div>
+            <div class="prize-tier second">
+              <p class="prize-tier-rank">2nd</p>
+              <p class="prize-tier-amount">$15</p>
+            </div>
+            <div class="prize-tier third">
+              <p class="prize-tier-rank">3rd</p>
+              <p class="prize-tier-amount">$5</p>
+            </div>
+          </div>
+
+          <p class="text-secondary" style="font-size: 0.92rem;">
+            Drop your Venmo handle below to be eligible. Leaving it blank is fine — you'll still participate, but won't be paid if you place top-3.
+          </p>
+
+          <div class="venmo-input-wrap">
+            <label class="venmo-label" for="venmo-input">Venmo handle (optional)</label>
+            <div class="input-with-prefix">
+              <span class="prefix" aria-hidden="true">@</span>
+              <input type="text" id="venmo-input" placeholder="yourname" autocomplete="off" autocapitalize="off" autocorrect="off" />
+            </div>
+          </div>
+
+          <div class="error-message" id="submit-error" role="alert" style="display:none;">
+            Couldn't save your response. Please tap Retry.
+          </div>
+
+          <button id="btn-final-submit" class="full">Submit</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== SCREEN 7: THANKS ===================== -->
+    <section class="screen" id="screen-7" aria-labelledby="thanks-heading">
+      <div class="thanks">
+        <span class="thanks-mark" aria-hidden="true">
+          <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M5 13l4 4L19 7"/>
+          </svg>
+        </span>
+        <h1 id="thanks-heading" class="gradient-text">You're all set.</h1>
+        <p>Your response has been recorded. The top 3 finishers will be paid via Venmo within a week of the study closing.</p>
+      </div>
+    </section>
+
+  </div>
+
+  <script>
+    const ENDPOINT_URL = 'https://script.google.com/macros/s/AKfycbzB_3awkUku4vJFqyA1bXdD1yfZWmGYwoGFUwXv_cYSQHEZsAUCalEJ0bxD6hB_4cU34w/exec';
+
+    const state = {
+      condition: null,
+      headline_type: null,
+      social_proof: null,
+      safe_allocation: null,
+      hlxe_allocation: null,
+      hlxe_return: null,
+      final_portfolio: null,
+      confidence: null,
+      prior_investor: null,
+      age: null,
+      gender: null,
+      year_in_school: null,
+      major_area: null,
+      venmo_handle: '',
+      start_timestamp: null
+    };
+
+    // ---- Screen routing ----
+    function showScreen(n) {
+      document.querySelectorAll('.screen').forEach(el => el.classList.remove('active'));
+      document.getElementById('screen-' + n).classList.add('active');
+      window.scrollTo({ top: 0, behavior: 'instant' });
+    }
+
+    // ---- Condition assignment ----
+    // ?condition=1..4 in URL forces a specific condition for testing; otherwise random.
+    function assignCondition() {
+      const params = new URLSearchParams(window.location.search);
+      const override = parseInt(params.get('condition'), 10);
+      if (override >= 1 && override <= 4) return override;
+      return Math.floor(Math.random() * 4) + 1;
+    }
+
+    function applyCondition(c) {
+      // 1: neutral / no    2: neutral / yes    3: hyped / no    4: hyped / yes
+      state.headline_type = (c === 3 || c === 4) ? 'hyped' : 'neutral';
+      state.social_proof  = (c === 2 || c === 4) ? 'yes' : 'no';
+
+      document.getElementById('badge-hot').style.display =
+        state.headline_type === 'hyped' ? 'flex' : 'none';
+      document.getElementById('social-proof').style.display =
+        state.social_proof === 'yes' ? 'flex' : 'none';
+    }
+
+    // ---- Screen 1: Begin ----
+    document.getElementById('btn-begin').addEventListener('click', () => {
+      state.start_timestamp = Date.now();
+      state.condition = assignCondition();
+      applyCondition(state.condition);
+      showScreen(2);
+    });
+
+    // ---- Screen 2: Allocation linked inputs ----
+    const safeInput = document.getElementById('safe-input');
+    const hlxeInput = document.getElementById('hlxe-input');
+    const totalDisplay = document.getElementById('total-display');
+    const totalText = document.getElementById('total-text');
+    const totalIndicator = document.getElementById('total-indicator');
+    const splitSafe = document.getElementById('split-safe');
+    const splitHlxe = document.getElementById('split-hlxe');
+    const submitAllocBtn = document.getElementById('btn-submit-allocation');
+
+    function clamp(n) { return Math.max(0, Math.min(1000, n)); }
+
+    function syncFrom(changed, other) {
+      const raw = changed.value;
+      if (raw === '') {
+        other.value = '';
+        updateAllocationUI();
+        return;
+      }
+      const v = parseInt(raw, 10);
+      if (isNaN(v)) {
+        other.value = '';
+        updateAllocationUI();
+        return;
+      }
+      const clamped = clamp(v);
+      if (clamped !== v) changed.value = String(clamped);
+      other.value = String(1000 - clamped);
+      updateAllocationUI();
+    }
+
+    function updateAllocationUI() {
+      const s = parseInt(safeInput.value, 10);
+      const h = parseInt(hlxeInput.value, 10);
+      const bothFilled = !isNaN(s) && !isNaN(h);
+      const total = bothFilled ? s + h : 0;
+
+      totalText.textContent = 'Total: $' + total + ' / $1,000';
+      totalDisplay.classList.remove('valid', 'invalid');
+      if (bothFilled && total === 1000) {
+        totalDisplay.classList.add('valid');
+        totalIndicator.textContent = 'Ready';
+      } else if (bothFilled && total !== 1000) {
+        totalDisplay.classList.add('invalid');
+        totalIndicator.textContent = (total > 1000 ? 'Over' : 'Short');
+      } else {
+        totalIndicator.textContent = 'Pending';
+      }
+
+      // Visual split bar
+      const safePct = bothFilled ? Math.max(0, Math.min(100, (s / 1000) * 100)) : 0;
+      const hlxePct = bothFilled ? Math.max(0, Math.min(100, (h / 1000) * 100)) : 0;
+      splitSafe.style.width = safePct + '%';
+      splitHlxe.style.width = hlxePct + '%';
+
+      const enabled = bothFilled && total === 1000 && s >= 0 && h >= 0;
+      submitAllocBtn.disabled = !enabled;
+      submitAllocBtn.setAttribute('aria-disabled', String(!enabled));
+    }
+
+    safeInput.addEventListener('input', () => syncFrom(safeInput, hlxeInput));
+    hlxeInput.addEventListener('input', () => syncFrom(hlxeInput, safeInput));
+
+    // ---- Screen 2: Submit allocation → draw return → confidence (return locked but not yet shown) ----
+    submitAllocBtn.addEventListener('click', () => {
+      const safe = parseInt(safeInput.value, 10);
+      const hlxe = parseInt(hlxeInput.value, 10);
+      state.safe_allocation = safe;
+      state.hlxe_allocation = hlxe;
+
+      // Uniform [-25, +25], 2 decimals. Drawn now so participant has committed; not yet displayed.
+      const ret = Math.round((Math.random() * 50 - 25) * 100) / 100;
+      state.hlxe_return = ret;
+
+      const safeFinal = safe * 1.08;
+      const hlxeFinal = hlxe * (1 + ret / 100);
+      const finalPortfolio = Math.round((safeFinal + hlxeFinal) * 100) / 100;
+      state.final_portfolio = finalPortfolio;
+
+      // Pre-render outcome DOM (numbers will be animated in when screen 4 is shown).
+      prepOutcome(safe, hlxe, ret, safeFinal, hlxeFinal, finalPortfolio);
+
+      showScreen(3); // confidence (pre-outcome)
+    });
+
+    // ---- Outcome rendering ----
+    let outcomeAnimated = false;
+
+    function prepOutcome(safe, hlxe, ret, safeFinal, hlxeFinal, finalPortfolio) {
+      const card = document.getElementById('outcome-card');
+      const headline = document.getElementById('return-headline');
+      const portfolioEl = document.getElementById('final-portfolio');
+      const deltaEl = document.getElementById('portfolio-delta');
+
+      const isPositive = ret >= 0;
+      card.classList.remove('positive', 'negative');
+      card.classList.add(isPositive ? 'positive' : 'negative');
+
+      headline.classList.remove('positive', 'negative');
+      headline.classList.add(isPositive ? 'positive' : 'negative');
+
+      // Final values for the DOM (will be animated on screen entry).
+      headline.dataset.target = ret.toFixed(2);
+      portfolioEl.dataset.target = finalPortfolio.toFixed(2);
+
+      // Delta vs. starting $1,000.
+      const delta = finalPortfolio - 1000;
+      const deltaSign = delta >= 0 ? '+' : '−';
+      deltaEl.textContent = deltaSign + '$' + Math.abs(delta).toFixed(2);
+      deltaEl.classList.remove('positive', 'negative');
+      deltaEl.classList.add(delta >= 0 ? 'positive' : 'negative');
+
+      // Breakdown cards
+      document.getElementById('breakdown-safe-amount').textContent = '$' + safeFinal.toFixed(2);
+      document.getElementById('breakdown-safe-detail').innerHTML = '$' + safe + ' &times; 1.08';
+
+      const op = ret >= 0 ? '+' : '−';
+      const absRet = Math.abs(ret).toFixed(2);
+      document.getElementById('breakdown-hlxe-amount').textContent = '$' + hlxeFinal.toFixed(2);
+      document.getElementById('breakdown-hlxe-detail').innerHTML =
+        '$' + hlxe + ' &times; (1 ' + op + ' ' + absRet + '%)';
+
+      outcomeAnimated = false;
+    }
+
+    function animateNumber(el, from, to, duration, format) {
+      const start = performance.now();
+      function frame(now) {
+        const t = Math.min(1, (now - start) / duration);
+        const eased = 1 - Math.pow(1 - t, 3); // ease-out cubic
+        const v = from + (to - from) * eased;
+        el.textContent = format(v);
+        if (t < 1) requestAnimationFrame(frame);
+      }
+      requestAnimationFrame(frame);
+    }
+
+    function runOutcomeAnimation() {
+      if (outcomeAnimated) return;
+      outcomeAnimated = true;
+
+      const headline = document.getElementById('return-headline');
+      const portfolioEl = document.getElementById('final-portfolio');
+      const ret = parseFloat(headline.dataset.target);
+      const finalPortfolio = parseFloat(portfolioEl.dataset.target);
+
+      animateNumber(headline, 0, ret, 1100, v => (v >= 0 ? '+' : '') + v.toFixed(2) + '%');
+      animateNumber(portfolioEl, 1000, finalPortfolio, 1100, v => '$' + v.toFixed(2));
+    }
+
+    // ---- Screen 3: Confidence → Outcome ----
+    const confidenceContinueBtn = document.getElementById('btn-confidence-continue');
+
+    function updateConfidenceUI() {
+      const conf = document.querySelector('input[name="confidence"]:checked');
+      const enabled = !!conf;
+      confidenceContinueBtn.disabled = !enabled;
+      confidenceContinueBtn.setAttribute('aria-disabled', String(!enabled));
+    }
+
+    document.getElementById('confidence-group')
+      .addEventListener('change', updateConfidenceUI);
+
+    confidenceContinueBtn.addEventListener('click', () => {
+      const conf = document.querySelector('input[name="confidence"]:checked');
+      state.confidence = parseInt(conf.value, 10);
+      showScreen(4);
+      // Kick off counter-up after the screen has transitioned in.
+      setTimeout(runOutcomeAnimation, 120);
+    });
+
+    // ---- Screen 4: Outcome → Demographics ----
+    document.getElementById('btn-outcome-continue').addEventListener('click', () => {
+      showScreen(5);
+    });
+
+    // ---- Screen 5: Demographics validation & submit ----
+    const ageInput = document.getElementById('age-input');
+    const demographicsBtn = document.getElementById('btn-demographics-continue');
+
+    function ageIsValid() {
+      const v = parseInt(ageInput.value, 10);
+      return !isNaN(v) && v > 0;
+    }
+
+    function updateDemographicsUI() {
+      const gender = document.querySelector('input[name="gender"]:checked');
+      const year = document.querySelector('input[name="year"]:checked');
+      const major = document.querySelector('input[name="major"]:checked');
+      const prior = document.querySelector('input[name="prior"]:checked');
+      const enabled = ageIsValid() && !!gender && !!year && !!major && !!prior;
+      demographicsBtn.disabled = !enabled;
+      demographicsBtn.setAttribute('aria-disabled', String(!enabled));
+    }
+
+    ageInput.addEventListener('input', updateDemographicsUI);
+    document.getElementById('gender-group').addEventListener('change', updateDemographicsUI);
+    document.getElementById('year-group').addEventListener('change', updateDemographicsUI);
+    document.getElementById('major-group').addEventListener('change', updateDemographicsUI);
+    document.getElementById('prior-group').addEventListener('change', updateDemographicsUI);
+
+    demographicsBtn.addEventListener('click', () => {
+      state.age = parseInt(ageInput.value, 10);
+      state.gender = document.querySelector('input[name="gender"]:checked').value;
+      state.year_in_school = document.querySelector('input[name="year"]:checked').value;
+      state.major_area = document.querySelector('input[name="major"]:checked').value;
+      state.prior_investor = document.querySelector('input[name="prior"]:checked').value;
+      showScreen(6);
+    });
+
+    // ---- Screen 6: Final submit ----
+    const venmoInput = document.getElementById('venmo-input');
+    const finalBtn = document.getElementById('btn-final-submit');
+    const errorBox = document.getElementById('submit-error');
+
+    function buildPayload() {
+      const elapsed = (Date.now() - state.start_timestamp) / 1000;
+      return {
+        timestamp: new Date().toISOString(),
+        condition: state.condition,
+        headline_type: state.headline_type,
+        social_proof: state.social_proof,
+        safe_allocation: state.safe_allocation,
+        hlxe_allocation: state.hlxe_allocation,
+        hlxe_return: state.hlxe_return,
+        final_portfolio: state.final_portfolio,
+        confidence: state.confidence,
+        prior_investor: state.prior_investor,
+        age: state.age,
+        gender: state.gender,
+        year_in_school: state.year_in_school,
+        major_area: state.major_area,
+        time_on_page_seconds: Math.round(elapsed),
+        time_to_submit_seconds: Math.round(elapsed),
+        venmo_handle: state.venmo_handle
+      };
+    }
+
+    async function submitData() {
+      errorBox.style.display = 'none';
+      finalBtn.disabled = true;
+      finalBtn.setAttribute('aria-disabled', 'true');
+      finalBtn.textContent = 'Submitting…';
+
+      const payload = buildPayload();
+
+      try {
+        const res = await fetch(ENDPOINT_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify(payload),
+          redirect: 'follow'
+        });
+        const text = await res.text();
+        let parsed = null;
+        try { parsed = JSON.parse(text); } catch (_) {}
+
+        if (parsed && parsed.status === 'success') {
+          showScreen(7);
+        } else {
+          throw new Error(parsed && parsed.message ? parsed.message : 'Unexpected response');
+        }
+      } catch (err) {
+        console.error('Submit failed:', err);
+        errorBox.style.display = 'block';
+        finalBtn.disabled = false;
+        finalBtn.removeAttribute('aria-disabled');
+        finalBtn.textContent = 'Retry';
+      }
+    }
+
+    finalBtn.addEventListener('click', () => {
+      state.venmo_handle = venmoInput.value.trim();
+      submitData();
+    });
+
+  </script>
+</body>
+</html>

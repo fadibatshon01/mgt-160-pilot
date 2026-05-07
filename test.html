@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MGT 160 Pilot — Pipeline Test</title>
+  <style>
+    :root {
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    body {
+      margin: 0;
+      padding: 2rem 1rem;
+      background: #f7f8fa;
+      color: #0f1d2e;
+      display: flex;
+      justify-content: center;
+    }
+    .card {
+      background: #fff;
+      border: 1px solid #e3e6eb;
+      border-radius: 12px;
+      padding: 2rem;
+      max-width: 540px;
+      width: 100%;
+      box-shadow: 0 1px 3px rgba(15, 29, 46, 0.04);
+    }
+    h1 {
+      font-size: 1.25rem;
+      margin: 0 0 0.5rem;
+    }
+    p {
+      color: #4a5568;
+      line-height: 1.5;
+      margin: 0 0 1.25rem;
+    }
+    button {
+      background: #1f6f54;
+      color: #fff;
+      border: none;
+      padding: 0.85rem 1.4rem;
+      font-size: 1rem;
+      font-weight: 600;
+      border-radius: 8px;
+      cursor: pointer;
+      width: 100%;
+    }
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    button:hover:not(:disabled) {
+      background: #195a44;
+    }
+    #status {
+      margin-top: 1.25rem;
+      padding: 0.85rem 1rem;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      display: none;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    #status.success {
+      display: block;
+      background: #e8f5ef;
+      color: #1f6f54;
+      border: 1px solid #b7e0cc;
+    }
+    #status.error {
+      display: block;
+      background: #fdecec;
+      color: #a32020;
+      border: 1px solid #f3b6b6;
+    }
+    #status.pending {
+      display: block;
+      background: #f0f3f8;
+      color: #2c3e57;
+      border: 1px solid #d6dde6;
+    }
+    code {
+      background: #f0f3f8;
+      padding: 0.1rem 0.35rem;
+      border-radius: 4px;
+      font-size: 0.85rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>MGT 160 Pilot — Pipeline Test</h1>
+    <p>
+      Click the button to POST a dummy row to the Apps Script endpoint.
+      A new row should appear in the bound Google Sheet within ~1 second.
+    </p>
+    <p style="font-size: 0.85rem; color: #6b7280;">
+      Endpoint: <code id="endpoint-display"></code>
+    </p>
+    <button id="send">Send Test Row</button>
+    <div id="status"></div>
+  </div>
+
+  <script>
+    const ENDPOINT_URL = 'https://script.google.com/macros/s/AKfycbzB_3awkUku4vJFqyA1bXdD1yfZWmGYwoGFUwXv_cYSQHEZsAUCalEJ0bxD6hB_4cU34w/exec';
+
+    document.getElementById('endpoint-display').textContent = ENDPOINT_URL;
+
+    const btn = document.getElementById('send');
+    const statusEl = document.getElementById('status');
+
+    function setStatus(kind, msg) {
+      statusEl.className = kind;
+      statusEl.textContent = msg;
+    }
+
+    btn.addEventListener('click', async () => {
+      if (ENDPOINT_URL === 'PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE') {
+        setStatus('error', 'Endpoint URL is not configured. Edit test.html and paste your Apps Script Web App URL into ENDPOINT_URL.');
+        return;
+      }
+
+      const dummy = {
+        timestamp: new Date().toISOString(),
+        condition: 1,
+        headline_type: 'neutral',
+        social_proof: 'no',
+        safe_allocation: 600,
+        hlxe_allocation: 400,
+        hlxe_return: 0.0742,
+        final_portfolio: 1077.68,
+        confidence: 4,
+        prior_investor: 'yes',
+        time_on_page_seconds: 42,
+        time_to_submit_seconds: 95,
+        venmo_handle: '@test-handle'
+      };
+
+      btn.disabled = true;
+      setStatus('pending', 'Sending test row...');
+
+      try {
+        const res = await fetch(ENDPOINT_URL, {
+          method: 'POST',
+          // text/plain avoids the CORS preflight; Apps Script reads the raw body via e.postData.contents.
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify(dummy),
+          redirect: 'follow'
+        });
+
+        const text = await res.text();
+        let parsed;
+        try { parsed = JSON.parse(text); } catch (_) { parsed = null; }
+
+        if (parsed && parsed.status === 'success') {
+          setStatus('success', 'Success — row appended to Sheet.\n\nResponse: ' + text);
+        } else if (parsed && parsed.status === 'error') {
+          setStatus('error', 'Server returned an error: ' + (parsed.message || 'unknown'));
+        } else {
+          setStatus('error', 'Unexpected response (HTTP ' + res.status + '):\n\n' + text.slice(0, 500));
+        }
+      } catch (err) {
+        setStatus('error', 'Request failed: ' + err);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
