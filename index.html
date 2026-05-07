@@ -1506,11 +1506,23 @@
     }
 
     // ---- Condition assignment ----
-    // ?condition=1..4 in URL forces a specific condition for testing; otherwise random.
-    function assignCondition() {
+    // Order of preference:
+    //   1. ?condition=1..4 URL override (testing)
+    //   2. Server-balanced assignment (Apps Script doGet returns the least-represented condition)
+    //   3. Local Math.random() fallback if the network request fails
+    async function assignCondition() {
       const params = new URLSearchParams(window.location.search);
       const override = parseInt(params.get('condition'), 10);
       if (override >= 1 && override <= 4) return override;
+
+      try {
+        const res = await fetch(ENDPOINT_URL, { method: 'GET', redirect: 'follow' });
+        const data = await res.json();
+        if (data && data.condition >= 1 && data.condition <= 4) return data.condition;
+      } catch (e) {
+        console.warn('Server condition assignment failed, falling back to local random:', e);
+      }
+
       return Math.floor(Math.random() * 4) + 1;
     }
 
@@ -1530,10 +1542,21 @@
     }
 
     // ---- Screen 1: Begin ----
-    document.getElementById('btn-begin').addEventListener('click', () => {
+    document.getElementById('btn-begin').addEventListener('click', async () => {
+      const btn = document.getElementById('btn-begin');
+      const originalLabel = btn.textContent;
+      btn.disabled = true;
+      btn.setAttribute('aria-disabled', 'true');
+      btn.textContent = 'Loading…';
+
       state.start_timestamp = Date.now();
-      state.condition = assignCondition();
+      state.condition = await assignCondition();
       applyCondition(state.condition);
+
+      btn.disabled = false;
+      btn.removeAttribute('aria-disabled');
+      btn.textContent = originalLabel;
+
       showScreen(2);
     });
 

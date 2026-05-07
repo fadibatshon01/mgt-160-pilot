@@ -54,8 +54,46 @@ function doPost(e) {
   }
 }
 
-function doGet() {
-  return jsonResponse({ status: 'ok', message: 'MGT 160 pilot endpoint is live' });
+/**
+ * GET handler — assigns the next participant's condition (1–4) using
+ * block randomization. Reads completed rows in the Sheet, counts how
+ * many of each condition have been recorded, and returns the condition
+ * with the fewest entries (random tiebreak when several are tied).
+ *
+ * The client (index.html) calls this on the Begin click and falls back
+ * to local Math.random() if the request fails.
+ */
+function doGet(e) {
+  try {
+    const sheet = SpreadsheetApp.openById(SHEET_ID).getSheets()[0];
+    const lastRow = sheet.getLastRow();
+
+    const counts = { 1: 0, 2: 0, 3: 0, 4: 0 };
+
+    if (lastRow >= 2) {
+      const conditionCol = COLUMNS.indexOf('condition') + 1; // 1-indexed
+      const values = sheet.getRange(2, conditionCol, lastRow - 1, 1).getValues();
+      for (let i = 0; i < values.length; i++) {
+        const c = parseInt(values[i][0], 10);
+        if (c >= 1 && c <= 4) counts[c] += 1;
+      }
+    }
+
+    // Find the lowest count.
+    let min = Infinity;
+    for (const k in counts) if (counts[k] < min) min = counts[k];
+
+    // Candidates = all conditions tied for the lowest count.
+    const candidates = [];
+    for (const k in counts) if (counts[k] === min) candidates.push(parseInt(k, 10));
+
+    // Random tiebreak.
+    const condition = candidates[Math.floor(Math.random() * candidates.length)];
+
+    return jsonResponse({ status: 'ok', condition: condition, counts: counts });
+  } catch (err) {
+    return jsonResponse({ status: 'error', message: String(err) });
+  }
 }
 
 function jsonResponse(obj) {
