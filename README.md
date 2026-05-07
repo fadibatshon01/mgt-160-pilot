@@ -1,65 +1,66 @@
 # MGT 160 Pilot
 
-Behavioral economics experiment for UCSD MGT 160. Participants are randomized into one of four conditions (2×2: hyped vs. neutral headline × social proof vs. no social proof), allocate a hypothetical $1,000 portfolio between a guaranteed-8% Safe asset and a fictional ETF (HLXE) with random returns, then see their outcome. Top 3 final portfolio values win Venmo prizes ($20 / $15 / $5). All decisions and metadata are logged to a Google Sheet via a Google Apps Script web app.
+Behavioral economics pilot for UCSD MGT 160. A single-page web app randomizes participants into a 2×2 (hyped vs. neutral headline × social proof vs. no social proof), captures a $1,000 portfolio allocation between a Treasury bond (5% guaranteed) and a fictional ETF (HLXE, uniform −25% to +25%), reveals a real-money outcome, and logs everything to a Google Sheet via Google Apps Script.
+
+For the full experiment design — research question, manipulations, outcomes, subgroups, participant flow — see [EXPERIMENT.md](EXPERIMENT.md).
 
 ## Repo layout
 
-- `apps-script.gs` — Apps Script endpoint code. Paste into Apps Script bound to the Sheet.
-- `test.html` — minimal page with one button that POSTs a dummy row to the endpoint. Used to verify the data pipeline before building the experiment UI.
-- `index.html` — (Phase 2) the actual experiment.
+- `index.html` — the participant-facing single-page experiment.
+- `apps-script.gs` — Apps Script endpoint code. Two handlers: `doPost` writes a 17-column row to the bound Sheet; `doGet` returns the next block-randomized condition based on current Sheet counts.
+- `test.html` — minimal pipeline test page (one button, posts a dummy row). Used to verify the Apps Script write path before touching the experiment UI.
+- `EXPERIMENT.md` — experiment design doc (research question, manipulations, flow, deviations from original proposal).
+- `README.md` — this file.
 
 ## Data pipeline
 
-The page POSTs a JSON body as `text/plain;charset=utf-8` to the deployed Apps Script Web App URL. `text/plain` is used deliberately — it counts as a CORS "simple" request and avoids the preflight `OPTIONS` call that Apps Script doesn't handle. The Apps Script `doPost` function reads the raw body from `e.postData.contents`, parses it as JSON, and appends a row to the first sheet of the bound spreadsheet.
+**Write path (POST):** the participant page POSTs a JSON body as `Content-Type: text/plain;charset=utf-8` to the deployed Apps Script Web App URL. `text/plain` is used deliberately — it counts as a CORS "simple" request and avoids the `OPTIONS` preflight that Apps Script doesn't handle. The script reads the raw body via `e.postData.contents`, parses it, and appends a row.
 
-## Google Sheet column headers
+**Read path (GET):** the page fetches its assigned condition from the same `/exec` URL on the Begin click. The Apps Script `doGet` reads the Sheet's `condition` column, counts entries per cell, and returns the smallest cell (with a uniform random tiebreak). This implements block randomization to keep the 4 cells balanced within ±1 throughout data collection. If the GET fails, the client falls back to local `Math.random()`.
 
-Paste these into row 1 of the bound Sheet (Sheet ID `19QtzOEEPzBWAlKqUqExDVD4TQXQqm8qz5U1_ZM-OG1k`), in order, left to right:
+## Google Sheet schema
+
+Sheet ID: `19QtzOEEPzBWAlKqUqExDVD4TQXQqm8qz5U1_ZM-OG1k`. Row 1 must contain these column headers, in this order, left to right (A through Q):
 
 ```
 timestamp	condition	headline_type	social_proof	safe_allocation	hlxe_allocation	hlxe_return	final_portfolio	confidence	prior_investor	age	gender	year_in_school	major_area	time_on_page_seconds	time_to_submit_seconds	venmo_handle
 ```
 
-(The values are tab-separated — copy the line above and paste into cell A1; Sheets will split it across columns.)
+(Values are tab-separated — copy the line above and paste into A1; Sheets splits across columns automatically.)
 
-The column order in the Sheet **must match** the `COLUMNS` array in `apps-script.gs`. The script writes rows positionally, not by header name.
+The column order in the Sheet **must match** the `COLUMNS` array in `apps-script.gs`. The script writes rows positionally, not by header name. The `safe_allocation` field name is preserved for analysis stability even though the user-facing label is now "Treasury bond" rather than "Safe."
 
 ## Apps Script deployment
 
-1. Open the bound Google Sheet in your browser.
-2. **Extensions → Apps Script** — this opens a new Apps Script project bound to the Sheet.
-3. Delete the default `Code.gs` content and paste the contents of `apps-script.gs` from this repo.
-4. Save (cmd+S). Name the project something like "MGT 160 Pilot Endpoint".
-5. Click **Deploy → New deployment**.
-6. Click the gear icon next to "Select type" and choose **Web app**.
-7. Configure:
-   - **Description:** `pilot v1` (or any label)
-   - **Execute as:** *Me (your account)*
-   - **Who has access:** *Anyone*
-8. Click **Deploy**.
-9. Google will prompt for permissions on first deploy:
-   - Click **Authorize access**, pick your account.
-   - You'll see a "Google hasn't verified this app" warning — this is expected for personal Apps Script projects. Click **Advanced**, then **Go to {project name} (unsafe)**.
-   - Grant the requested permissions (it needs to read/write the bound spreadsheet).
-10. Copy the **Web app URL** that appears (ends in `/exec`). This is `ENDPOINT_URL`.
+1. Open the bound Sheet.
+2. **Extensions → Apps Script** — opens a new project bound to the Sheet.
+3. Replace the default `Code.gs` with the contents of [apps-script.gs](apps-script.gs). Save.
+4. **Deploy → New deployment.**
+5. Type: **Web app**.
+6. Configure: **Execute as = Me**, **Who has access = Anyone**.
+7. **Deploy**. Authorize when prompted (Advanced → Go to {project} (unsafe) → Allow on first deploy).
+8. Copy the `.../exec` Web App URL.
+9. Paste it into [index.html](index.html) and [test.html](test.html), replacing the `ENDPOINT_URL` constant.
 
-If you redeploy after editing the script, use **Deploy → Manage deployments → edit (pencil icon) → Version: New version → Deploy** to keep the same URL. Choosing "New deployment" instead generates a fresh URL.
+To redeploy after editing the script, use **Deploy → Manage deployments → pencil icon → Version: New version → Deploy**. This keeps the same `/exec` URL. Choosing "New deployment" instead generates a fresh URL and breaks the live page.
 
 ## Pipeline test
 
-1. Paste your deployed Web App URL into `test.html` — replace `PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE` with the `/exec` URL.
-2. Open `test.html` locally (double-click in Finder, or push to GitHub Pages and open).
-3. Click **Send Test Row**.
-4. You should see "Success — row appended to Sheet." Check the Sheet for a new row with the dummy values.
+1. Open `test.html` in a browser (locally or via the deployed URL).
+2. Click **Send Test Row**.
+3. Confirm a row appears in the Sheet with the dummy values. Delete the test row before launch.
 
-If you see a CORS error, the most common cause is that the Web App was deployed with "Who has access: Only myself" instead of "Anyone". Re-deploy.
+CORS errors on the test usually mean the deployment was set to "Only myself" instead of "Anyone." Re-deploy to fix.
 
-If you see a 401 or "page not found", the URL likely has a typo or the deployment was deleted.
+## Deployment
 
-## GitHub Pages deployment
+The participant page is deployed at **https://mgt-160-pilot.vercel.app** (Vercel auto-deploys on every push to `main`).
 
-After Phase 2 is built and `index.html` exists:
+Alternative: GitHub Pages off the same repo also works (`Settings → Pages → Branch: main / root`). The site would then be at `https://fadibatshon01.github.io/mgt-160-pilot/`.
 
-1. Push to `main` on `https://github.com/fadibatshon01/mgt-160-pilot`.
-2. **Settings → Pages → Source:** Deploy from a branch → `main` / root → Save.
-3. The site will be live at `https://fadibatshon01.github.io/mgt-160-pilot/` within ~1 minute.
+Send only the production URL to participants; do not share the GitHub repo URL itself, which would let participants read the source and figure out the conditions.
+
+## QA
+
+- `?condition=N` URL parameter (where N ∈ {1,2,3,4}) overrides the server-balanced assignment and forces a specific condition. Used for QA to verify all four conditions render correctly. Should *not* appear in URLs sent to participants.
+- Hitting `https://script.google.com/macros/s/.../exec` directly in a browser triggers a `doGet` and returns the current Sheet counts as JSON — useful for monitoring cell balance during data collection.
