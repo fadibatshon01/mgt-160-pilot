@@ -1,0 +1,284 @@
+
+========================================================================
+STEP 1 — DATA CLEANING & VALIDATION
+========================================================================
+Loaded 172 rows. Missing values per analytical column:
+  hlxe_allocation        missing=0
+  headline_type          missing=0
+  social_proof           missing=0
+  confidence             missing=0
+  prior_investor         missing=0
+  age                    missing=0
+  gender                 missing=0
+  major_area             missing=0
+  year_in_school         missing=0
+
+Speeders (time_on_page < 30s): 7 (kept in main analysis, dropped in robustness rerun)
+Age outliers (<16 or >40): 3 (values: [2, 56, 69])
+
+Analyzable N = 172.
+  Control cell (neutral headline, no social proof): n=43
+  Any treatment (other 3 cells):                       n=129
+
+========================================================================
+STEP 2 — BALANCE TABLE (Control vs Treatment, Rady s.9)
+========================================================================
+
+                       Variable  Control mean (SD) Treatment mean (SD) Diff (T − C) p-value    Test
+                    Age (years)       21.72 (5.95)        20.96 (4.89)        -0.76   0.452 Welch t
+               Time on page (s) 1904.05 (11762.29)     121.95 (194.97)     -1782.09   0.326 Welch t
+Confidence (1–5, post-decision)        3.33 (0.89)         3.41 (1.23)        +0.09   0.625 Welch t
+                  Gender: Woman         17 (39.5%)          44 (34.1%)      -5.4 pp   0.443    chi²
+                    Gender: Man         26 (60.5%)          81 (62.8%)      +2.3 pp                
+     Gender: Non-binary / other           0 (0.0%)            4 (3.1%)      +3.1 pp                
+                 Year: Freshman           2 (4.7%)            4 (3.1%)      -1.6 pp   0.908    chi²
+                Year: Sophomore          9 (20.9%)          28 (21.7%)      +0.8 pp                
+                   Year: Junior         22 (51.2%)          69 (53.5%)      +2.3 pp                
+                   Year: Senior          9 (20.9%)          23 (17.8%)      -3.1 pp                
+                 Year: Graduate           1 (2.3%)            2 (1.6%)      -0.8 pp                
+                    Year: Other           0 (0.0%)            3 (2.3%)      +2.3 pp                
+         Major: Business / Econ         37 (86.0%)         109 (84.5%)      -1.6 pp   0.914    chi²
+                    Major: STEM           4 (9.3%)          14 (10.9%)      +1.6 pp                
+         Major: Social sciences           1 (2.3%)            2 (1.6%)      -0.8 pp                
+              Major: Humanities           0 (0.0%)            2 (1.6%)      +1.6 pp                
+                   Major: Other           1 (2.3%)            2 (1.6%)      -0.8 pp                
+            Prior investor: Yes         24 (55.8%)          78 (60.5%)      +4.7 pp   0.720    chi²
+             Prior investor: No         19 (44.2%)          51 (39.5%)      -4.7 pp                
+
+LaTeX  -> /Users/fadibatshon/Documents/mgt-160-pilot/analysis/output/balance_table.tex
+CSV    -> /Users/fadibatshon/Documents/mgt-160-pilot/analysis/output/balance_table.csv
+PNG    -> /Users/fadibatshon/Documents/mgt-160-pilot/analysis/figures/t01_balance_table.png
+
+(also producing the 4-cell version with ANOVA / chi-square across cells)
+
+========================================================================
+STEP 3 — SUMMARY STATISTICS BY TREATMENT GROUP
+========================================================================
+
+HLXE allocation by arm:
+               Group   n Mean ($) SD ($) SE of mean ($) Median ($)  Min  Max % at $0 % at $500 % at $1000
+Control (neutral/no)  43    596.6  279.4           42.6        500    0 1000    2.3%     27.9%      14.0%
+       Any treatment 129    585.3  312.3           27.5        560    0 1000    5.4%     19.4%      14.7%
+
+HLXE allocation by cell:
+                n   mean     sd  median  min   max
+cell                                              
+hyped / no     43  594.2  309.5   501.0    0  1000
+hyped / yes    43  596.8  326.6   500.0    0  1000
+neutral / no   43  596.6  279.4   500.0    0  1000
+neutral / yes  43  564.9  306.9   600.0    0  1000
+
+========================================================================
+STEP 4 — HYPOTHESIS TESTS  (Welch t, two-sided; H0, p, 95% CI)
+========================================================================
+Decision rule: pre-committed alpha = 0.05.  Reject H0 when p < alpha.
+Note (Rady s.13–15): p is the probability of seeing data this extreme *if H0 were true*. It is NOT P(H0 | data) and NOT an effect size.
+We 'fail to reject' rather than 'accept' — H0 is never proven, only undefeated.
+
+[PRIMARY: Any treatment vs Control]   H0: mean_treatment = mean_control   (two-sided Welch)
+  control: n= 43  mean=$ 596.60  SD=$279.40
+  treatment: n=129  mean=$ 585.29  SD=$312.31
+  delta = $-11.31   t = -0.223   df = 79.7   p = 0.8241
+  95% CI on delta: [$-112.23, $+89.61]    Cohen's d = -0.037
+
+[H1: Hyped vs Neutral (main effect of headline)]   H0: mean_hyped = mean_neutral   (two-sided Welch)
+  neutral: n= 86  mean=$ 580.74  SD=$292.17
+  hyped: n= 86  mean=$ 595.50  SD=$316.28
+  delta = $+14.76   t = +0.318   df = 168.9   p = 0.7510
+  95% CI on delta: [$-76.90, $+106.41]    Cohen's d = +0.048
+
+[H2: Social-proof vs None (main effect of social proof)]   H0: mean_yes = mean_no   (two-sided Welch)
+  no: n= 86  mean=$ 595.41  SD=$293.09
+  yes: n= 86  mean=$ 580.84  SD=$315.43
+  delta = $-14.57   t = -0.314   df = 169.1   p = 0.7541
+  95% CI on delta: [$-106.23, $+77.09]    Cohen's d = -0.048
+
+[neutral/yes vs Control]   H0: mean_neutral/yes = mean_control   (two-sided Welch)
+  control: n= 43  mean=$ 596.60  SD=$279.40
+  neutral/yes: n= 43  mean=$ 564.88  SD=$306.89
+  delta = $-31.72   t = -0.501   df = 83.3   p = 0.6176
+  95% CI on delta: [$-157.60, $+94.15]    Cohen's d = -0.108
+
+[hyped/no vs Control]   H0: mean_hyped/no = mean_control   (two-sided Welch)
+  control: n= 43  mean=$ 596.60  SD=$279.40
+  hyped/no: n= 43  mean=$ 594.21  SD=$309.48
+  delta = $-2.40   t = -0.038   df = 83.1   p = 0.9700
+  95% CI on delta: [$-128.86, $+124.07]    Cohen's d = -0.008
+
+[hyped/yes vs Control]   H0: mean_hyped/yes = mean_control   (two-sided Welch)
+  control: n= 43  mean=$ 596.60  SD=$279.40
+  hyped/yes: n= 43  mean=$ 596.79  SD=$326.59
+  delta = $+0.19   t = +0.003   df = 82.0   p = 0.9977
+  95% CI on delta: [$-130.20, $+130.57]    Cohen's d = +0.001
+
+Bonferroni (Rady s.27): alpha_corrected = 0.05/3 = 0.0167 for the 3 cell-vs-control contrasts.
+
+Decision summary (* = reject H0; — = fail to reject):
+  —  PRIMARY: Any treatment vs Control                       delta=  -11.3  p=0.8241
+  —  H1: Hyped vs Neutral (main effect of headline)          delta=  +14.8  p=0.7510
+  —  H2: Social-proof vs None (main effect of social proof)  delta=  -14.6  p=0.7541
+  —  neutral/yes vs Control                                  delta=  -31.7  p=0.6176  p_Bonf=1.0000
+  —  hyped/no vs Control                                     delta=   -2.4  p=0.9700  p_Bonf=1.0000
+  —  hyped/yes vs Control                                    delta=   +0.2  p=0.9977  p_Bonf=1.0000
+
+========================================================================
+STEP 4b — NON-PARAMETRIC BACKUP (40.7% of DV is at boundaries)
+========================================================================
+Kruskal-Wallis across 4 cells:  H = 0.326   p = 0.9551
+Mann-Whitney treat vs control:  U = 2756   p = 0.9517
+
+========================================================================
+STEP 5 — OLS REGRESSIONS (HC1 robust SE, Rady s.12)
+========================================================================
+Raw difference in means (treat − control) = $-11.31  (= OLS coefficient on treat)
+
+(1) Simple  Y ~ treat
+==============================================================================
+                 coef    std err          z      P>|z|      [0.025      0.975]
+------------------------------------------------------------------------------
+Intercept    596.6047     42.356     14.085      0.000     513.588     679.622
+treat        -11.3101     50.529     -0.224      0.823    -110.344      87.724
+==============================================================================
+   R² = 0.0003   N = 172
+
+(2) Factorial  Y ~ headline * social_proof
+====================================================================================================================
+                                                       coef    std err          z      P>|z|      [0.025      0.975]
+--------------------------------------------------------------------------------------------------------------------
+Intercept                                          596.6047     42.608     14.002      0.000     513.095     680.114
+C(headline_type)[T.hyped]                           -2.3953     63.584     -0.038      0.970    -127.017     122.226
+C(social_proof)[T.yes]                             -31.7209     63.290     -0.501      0.616    -155.767      92.325
+C(headline_type)[T.hyped]:C(social_proof)[T.yes]    34.3023     93.346      0.367      0.713    -148.653     217.258
+====================================================================================================================
+   R² = 0.0020   N = 172
+
+(3) +Controls  Y ~ treat + age + prior_investor + gender + major
+====================================================================================================
+                                       coef    std err          z      P>|z|      [0.025      0.975]
+----------------------------------------------------------------------------------------------------
+Intercept                          671.7603    151.241      4.442      0.000     375.333     968.188
+C(prior_investor)[T.yes]            11.6104     52.890      0.220      0.826     -92.053     115.274
+C(gender)[T.non_binary_or_other]    49.0212    142.049      0.345      0.730    -229.389     327.432
+C(gender)[T.woman]                 -66.8417     52.854     -1.265      0.206    -170.434      36.750
+C(major_area)[T.stem]               10.4083     86.622      0.120      0.904    -159.368     180.185
+treat                              -18.9435     55.089     -0.344      0.731    -126.915      89.028
+age                                 -2.4383      6.285     -0.388      0.698     -14.757       9.880
+====================================================================================================
+   R² = 0.0139   N = 164
+
+PRIMARY POINT ESTIMATE  (Rady s.23–24 template):
+  beta-hat (treat) = $-11.31   HC1 SE = $50.53
+  95% CI = [$-110.34, $+87.72]   z = -0.224   p = 0.8229
+  Decision at alpha = 0.05:  FAIL TO REJECT H0.
+  Interpretation: the pilot does not show evidence that the manipulation shifted allocation. A Type II error (false negative) is plausible given the pilot's MDE — see Step 6.
+
+========================================================================
+STEP 5b — 2×2 ANOVA (Type II)
+========================================================================
+                                        sum_sq     df       F  PR(>F)  partial_eta2
+C(headline_type)                  7.901159e+03    1.0  0.0844  0.7718        0.0005
+C(social_proof)                   1.101379e+04    1.0  0.1176  0.7321        0.0007
+C(headline_type):C(social_proof)  1.264898e+04    1.0  0.1350  0.7137        0.0008
+Residual                          1.573664e+07  168.0     NaN     NaN           NaN
+
+LaTeX regression table -> /Users/fadibatshon/Documents/mgt-160-pilot/analysis/output/regression_table.tex
+PNG regression table   -> /Users/fadibatshon/Documents/mgt-160-pilot/analysis/figures/t05_regression_table.png
+
+========================================================================
+STEP 6 — PRE-REGISTERED MODERATOR: prior_investor × treatment
+========================================================================
+==================================================================================================
+                                     coef    std err          z      P>|z|      [0.025      0.975]
+--------------------------------------------------------------------------------------------------
+Intercept                        533.0000     64.772      8.229      0.000     406.049     659.951
+C(prior_investor)[T.yes]         113.9583     84.551      1.348      0.178     -51.758     279.675
+treat                             37.9608     78.170      0.486      0.627    -115.250     191.171
+treat:C(prior_investor)[T.yes]   -90.2525    101.702     -0.887      0.375    -289.584     109.079
+==================================================================================================
+
+Interpretation:
+ - 'treat' coefficient = effect of treatment among non-investors (reference).
+ - Interaction term = (effect on investors) − (effect on non-investors).
+ - Interaction beta = $-90.25, p = 0.3749: no significant differential effect between prior investors and non-investors.
+
+========================================================================
+STEP 7 — SECONDARY OUTCOME: post-decision confidence (1–5)
+========================================================================
+
+[Confidence: treatment vs control]   H0: mean_treatment = mean_control   (two-sided Welch)
+  control: n= 43  mean=$   3.33  SD=$  0.89
+  treatment: n=129  mean=$   3.41  SD=$  1.23
+  delta = $+0.09   t = +0.491   df = 98.9   p = 0.6248
+  95% CI on delta: [$-0.26, $+0.43]    Cohen's d = +0.074
+  Mann-Whitney (ordinal-respecting):  U = 3010   p = 0.3873
+
+2×2 OLS on confidence (HC1):
+====================================================================================================================
+                                                       coef    std err          z      P>|z|      [0.025      0.975]
+--------------------------------------------------------------------------------------------------------------------
+Intercept                                            3.3256      0.136     24.439      0.000       3.059       3.592
+C(headline_type)[T.hyped]                        -1.096e-15      0.229  -4.78e-15      1.000      -0.449       0.449
+C(social_proof)[T.yes]                               0.0465      0.242      0.192      0.847      -0.427       0.520
+C(headline_type)[T.hyped]:C(social_proof)[T.yes]     0.1628      0.353      0.461      0.645      -0.530       0.856
+====================================================================================================================
+
+========================================================================
+STEP 8 — POWER, MDE, AND ROLLOUT SAMPLE SIZE (Rady s.17, 24–25)
+========================================================================
+sigma-hat (pooled within-cell SD)  = $305.59     <- the pilot's headline deliverable
+delta-hat (treat − control)         = $-11.31
+SE(delta-hat)                       = $50.71
+Pilot total N = 172 (~43 per cell, ~86 per main-effect level)
+
+========================================================================
+STEP 8a — MDE in this pilot (what could we have detected?)
+========================================================================
+Closed-form MDE inverts the power formula at the pilot's n and the given alpha.
+  alpha=0.05, main-effect (n/2 per level):  d_MDE = 0.430   (= $131 in $)
+  alpha=0.05, cell-vs-control (n/4 per cell):  d_MDE = 0.611   (= $187 in $)
+  alpha=0.1, main-effect (n/2 per level):  d_MDE = 0.381   (= $116 in $)
+  alpha=0.1, cell-vs-control (n/4 per cell):  d_MDE = 0.541   (= $165 in $)
+
+========================================================================
+STEP 8b — ROLLOUT SAMPLE SIZE (Rady s.24–25)
+========================================================================
+Formula: n_per_group ~ 2 (z_{1-a/2} + z_{1-b})^2 (sigma/delta)^2  (Rady s.17)
+  At alpha=0.05: 80% -> (z_a + z_b)^2 ~ 7.85, 90% -> 10.51.
+
+                         Assumed effect delta ($) Power Cohen's d  n / group (z-formula)  n / group (t-formula)  Total N (2 arms)
+                            pilot delta        11   80%     0.037                  11460                  11461             22920
+                            pilot delta        11   90%     0.037                  15342                  15343             30684
+0.7 x pilot delta (winner's-curse adj.)         8   80%     0.026                  23388                  23389             46776
+0.7 x pilot delta (winner's-curse adj.)         8   90%     0.026                  31310                  31311             62620
+                     $50 managerial MDE        50   80%     0.164                    587                    588              1174
+                     $50 managerial MDE        50   90%     0.164                    785                    786              1570
+                    $100 managerial MDE       100   80%     0.327                    147                    148               294
+                    $100 managerial MDE       100   90%     0.327                    197                    198               394
+
+LaTeX rollout table -> /Users/fadibatshon/Documents/mgt-160-pilot/analysis/output/rollout_sample_size.tex
+
+Composed rollout N* (0.7 x delta, 80% power, alpha=0.05):
+  base/arm = 23388  x1.3 multitest = 30405  x2 subgroup = 60809  x1.5 attrition = 91214/arm
+
+========================================================================
+STEP 8c — SIMULATION-BASED POWER (Week 7 s.38–39)
+========================================================================
+Bounded, clumpy DV (40%+ at boundaries) violates the normality assumption behind the closed-form formula. Bootstrap-resample the empirical cells to get an honest power curve.
+  n=  50/arm: simulated power = 0.056  (2000 reps)
+  n= 100/arm: simulated power = 0.058  (2000 reps)
+  n= 200/arm: simulated power = 0.069  (2000 reps)
+  n= 400/arm: simulated power = 0.074  (2000 reps)
+
+========================================================================
+STEP 9 — ROBUSTNESS (drop speeders; drop age outliers; both)
+========================================================================
+  Drop speeders only                 (N=165): delta=$  -6.76  p=0.8966  95% CI [-110.2, +96.6]  -> fail to reject
+  Drop age outliers only             (N=169): delta=$ -15.32  p=0.7670  95% CI [-118.0, +87.3]  -> fail to reject
+  Drop speeders AND age outliers     (N=163): delta=$  -7.07  p=0.8938  95% CI [-112.3, +98.2]  -> fail to reject
+
+========================================================================
+STEP 10 — FIGURES (publication style)
+========================================================================
+Saved 5 figures -> /Users/fadibatshon/Documents/mgt-160-pilot/analysis/figures/
+
+Results memo -> /Users/fadibatshon/Documents/mgt-160-pilot/analysis/output/RESULTS_MEMO.md

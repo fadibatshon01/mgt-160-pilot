@@ -1,0 +1,20 @@
+Variable,Control mean (SD),Treatment mean (SD),Diff (T − C),p-value,Test
+Age (years),21.72 (5.95),20.96 (4.89),-0.76,0.452,Welch t
+Time on page (s),1904.05 (11762.29),121.95 (194.97),-1782.09,0.326,Welch t
+"Confidence (1–5, post-decision)",3.33 (0.89),3.41 (1.23),+0.09,0.625,Welch t
+Gender: Woman,17 (39.5%),44 (34.1%),-5.4 pp,0.443,chi²
+Gender: Man,26 (60.5%),81 (62.8%),+2.3 pp,,
+Gender: Non-binary / other,0 (0.0%),4 (3.1%),+3.1 pp,,
+Year: Freshman,2 (4.7%),4 (3.1%),-1.6 pp,0.908,chi²
+Year: Sophomore,9 (20.9%),28 (21.7%),+0.8 pp,,
+Year: Junior,22 (51.2%),69 (53.5%),+2.3 pp,,
+Year: Senior,9 (20.9%),23 (17.8%),-3.1 pp,,
+Year: Graduate,1 (2.3%),2 (1.6%),-0.8 pp,,
+Year: Other,0 (0.0%),3 (2.3%),+2.3 pp,,
+Major: Business / Econ,37 (86.0%),109 (84.5%),-1.6 pp,0.914,chi²
+Major: STEM,4 (9.3%),14 (10.9%),+1.6 pp,,
+Major: Social sciences,1 (2.3%),2 (1.6%),-0.8 pp,,
+Major: Humanities,0 (0.0%),2 (1.6%),+1.6 pp,,
+Major: Other,1 (2.3%),2 (1.6%),-0.8 pp,,
+Prior investor: Yes,24 (55.8%),78 (60.5%),+4.7 pp,0.720,chi²
+Prior investor: No,19 (44.2%),51 (39.5%),-4.7 pp,,

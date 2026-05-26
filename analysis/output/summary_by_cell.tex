@@ -1,0 +1,18 @@
+% requires \usepackage{booktabs, threeparttable}
+\begin{table}[!htbp]
+  \centering
+  \begin{threeparttable}
+  \caption{Per-cell summary statistics for HLXE allocation (USD). Cell sizes are set by block randomization and reported in the $n$ column. SD is the unbiased ($n{-}1$) sample standard deviation.}
+  \label{tab:summary_cell}
+  \begin{tabular}{lcccccc}
+\toprule
+Cell (headline / social proof) & \$n\$ & Mean & SD & Median & Min & Max \\
+\midrule
+hyped / no & 43 & 594.200 & 309.500 & 501.000 & 0 & 1000 \\
+hyped / yes & 43 & 596.800 & 326.600 & 500.000 & 0 & 1000 \\
+neutral / no & 43 & 596.600 & 279.400 & 500.000 & 0 & 1000 \\
+neutral / yes & 43 & 564.900 & 306.900 & 600.000 & 0 & 1000 \\
+\bottomrule
+\end{tabular}
+  \end{threeparttable}
+\end{table}

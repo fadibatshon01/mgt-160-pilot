@@ -1,0 +1,16 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Class materials (keep local, don't redistribute)
+Class slides/
+
+# Raw pilot data (contains real Venmo handles — PII)
+analysis/data/*.csv
+!analysis/data/.gitkeep

@@ -1,0 +1,9 @@
+Assumed effect,delta ($),Power,Cohen's d,n / group (z-formula),n / group (t-formula),Total N (2 arms)
+pilot delta,11,80%,0.037,11460,11461,22920
+pilot delta,11,90%,0.037,15342,15343,30684
+0.7 x pilot delta (winner's-curse adj.),8,80%,0.026,23388,23389,46776
+0.7 x pilot delta (winner's-curse adj.),8,90%,0.026,31310,31311,62620
+$50 managerial MDE,50,80%,0.164,587,588,1174
+$50 managerial MDE,50,90%,0.164,785,786,1570
+$100 managerial MDE,100,80%,0.327,147,148,294
+$100 managerial MDE,100,90%,0.327,197,198,394
