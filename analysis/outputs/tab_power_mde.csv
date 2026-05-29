@@ -1,0 +1,3 @@
+contrast,n_per_group,total_n,observed_d,achieved_power,MDE_d_at_0.80,n_per_group_needed_for_0.80
+social_proof,88,176,0.04,0.058,0.425,9993
+headline_type,88,176,0.033,0.055,0.425,14674

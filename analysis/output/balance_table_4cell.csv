@@ -1,8 +1,0 @@
-Variable,neutral / no,neutral / yes,hyped / no,hyped / yes,Test,stat,p-value
-Age (years),21.72 (5.95),21.93 (7.49),20.47 (3.67),20.49 (1.37),ANOVA F,0.988,0.400
-Time on page (s),1904.05 (11762.29),129.98 (198.32),105.51 (109.19),130.37 (253.35),ANOVA F,0.986,0.401
-Confidence (1–5),3.33 (0.89),3.37 (1.31),3.33 (1.21),3.53 (1.18),ANOVA F,0.316,0.814
-Gender,,,,,chi²,4.677,0.586
-Year,,,,,chi²,18.815,0.222
-Major area,,,,,chi²,5.193,0.951
-Prior investor,,,,,chi²,0.482,0.923

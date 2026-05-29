@@ -1,0 +1,3 @@
+effect,mean_a,mean_b,diff,ci_low,ci_high,t,df,p,cohens_d,n_a,n_b
+social_proof (yes − no),581.3,593.2,-12.0,-101.8,77.9,-0.26,173.0,0.793,-0.04,88,88
+headline_type (hyped − neutral),592.2,582.3,9.9,-80.0,99.7,0.22,172.9,0.828,0.03,88,88

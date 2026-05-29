@@ -1,1110 +1,1094 @@
-"""MGT 160 pilot analysis — built to Prof. Erik Johnson's two-deck framework.
-
-Design: 2x2 between-subjects, headline_type (neutral|hyped) x social_proof (no|yes)
-DV: hlxe_allocation (dollars of the $1,000 put in the risky ETF)
-Control cell = neutral / no;            Any treatment = the other 3 cells
-
-Outputs (all in output/ and figures/):
-  - balance_table.tex / .csv       — control vs treatment, mean (SD), t-test p (Rady s.9)
-  - balance_table_4cell.tex / .csv — 4-cell version, ANOVA / chi-square p
-  - summary_by_cell.tex / .csv     — descriptives by cell
-  - regression_table.tex / .csv    — 3 nested OLS, HC1 robust SE (Rady s.12)
-  - rollout_sample_size.tex / .csv — n_per_group at 80% / 90% power (Rady s.24-25)
-  - 01_density_overlay.png         — KDE bell curves: treatment vs control
-  - 01b_gaussian_overlay.png       — fitted Normal PDFs: treatment vs control
-  - 02_density_by_cell.png         — KDE bell curves for all 4 cells
-  - 02b_gaussian_by_cell.png       — fitted Normal PDFs for all 4 cells
-  - 03_bars_ci.png                 — bar chart of means w/ 95% CI (Rady s.10)
-  - 04_interaction.png             — 2x2 interaction plot
-  - 05_pilot_vs_rollout_ci.png     — same delta, different precision
-  - RESULTS_MEMO.md                — narrative walk-through w/ rubric mapping
-  - report.txt                     — full console log
 """
+MGT 160 Pilot — Analysis Pipeline
+=================================
+Implements the pre-specified analysis plan for the HLXE ETF 2x2 factorial study.
+
+Run:
+    python3 analyze.py
+
+Inputs:
+    data/Pilot results.csv   (default; override with --csv)
+
+Outputs (written to outputs/):
+    report.md                 (single written report)
+    fig_*.png                 (figures)
+    tab_*.csv                 (tables)
+"""
+
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+from dataclasses import dataclass
 from pathlib import Path
+from textwrap import dedent
 
 import numpy as np
 import pandas as pd
-import scipy.stats as st
+import matplotlib.pyplot as plt
+from scipy import stats
+import statsmodels.api as sm
 import statsmodels.formula.api as smf
-from statsmodels.stats.anova import anova_lm
 from statsmodels.stats.power import TTestIndPower
 
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import seaborn as sns
+ALPHA = 0.05
+HERE = Path(__file__).resolve().parent
+DEFAULT_CSV = HERE / "data" / "Pilot results.csv"
+OUT = HERE / "outputs"
+OUT.mkdir(exist_ok=True)
 
-DV = "hlxe_allocation"
-ROOT = Path(__file__).parent
-FIG = ROOT / "figures"
-OUT = ROOT / "output"
-sns.set_theme(style="whitegrid", context="talk")
-plt.rcParams.update({"figure.dpi": 120, "savefig.dpi": 200, "savefig.bbox": "tight"})
+ATTN_LOWER = 10     # seconds: <10 = didn't read
+ATTN_UPPER = 600    # seconds: >600 = walked away
 
-CONTROL_DESC = "neutral headline, no social proof"
-LOG: list[str] = []
-
-
-def say(*a):
-    line = " ".join(str(x) for x in a)
-    print(line)
-    LOG.append(line)
-
-
-def hr(title):
-    say("\n" + "=" * 72)
-    say(title)
-    say("=" * 72)
+# 4 conditions: (headline_type, social_proof) -> condition number
+CELL_ORDER = [
+    ("neutral", "no"),     # 1 — control
+    ("neutral", "yes"),    # 2
+    ("hyped",   "no"),     # 3
+    ("hyped",   "yes"),    # 4
+]
+CELL_LABELS = {
+    ("neutral", "no"):  "Neutral / no proof (Ctrl)",
+    ("neutral", "yes"): "Neutral / proof",
+    ("hyped",   "no"):  "Hyped / no proof",
+    ("hyped",   "yes"): "Hyped / proof",
+}
 
 
-# ============================================================ load + clean
-def load(path: Path) -> pd.DataFrame:
-    df = pd.read_csv(path)
-    df.columns = [c.strip() for c in df.columns]
-    num = ["safe_allocation", "hlxe_allocation", "hlxe_return", "final_portfolio",
-           "confidence", "age", "time_on_page_seconds", "time_to_submit_seconds"]
-    for c in num:
-        if c in df:
+# ------------------------------------------------------------------ helpers
+
+def fmt_p(p: float) -> str:
+    if p is None or (isinstance(p, float) and np.isnan(p)):
+        return "n/a"
+    return "<0.001" if p < 0.001 else f"{p:.3f}"
+
+
+def cohens_d(a: np.ndarray, b: np.ndarray) -> float:
+    a = np.asarray(a, dtype=float)
+    b = np.asarray(b, dtype=float)
+    na, nb = len(a), len(b)
+    if na < 2 or nb < 2:
+        return float("nan")
+    sa2 = a.var(ddof=1)
+    sb2 = b.var(ddof=1)
+    sp = np.sqrt(((na - 1) * sa2 + (nb - 1) * sb2) / (na + nb - 2))
+    if sp == 0:
+        return float("nan")
+    return (a.mean() - b.mean()) / sp
+
+
+def welch_t(a: np.ndarray, b: np.ndarray) -> dict:
+    a = np.asarray(a, dtype=float)
+    b = np.asarray(b, dtype=float)
+    a = a[~np.isnan(a)]
+    b = b[~np.isnan(b)]
+    res = stats.ttest_ind(a, b, equal_var=False)
+    diff = a.mean() - b.mean()
+    se = np.sqrt(a.var(ddof=1) / len(a) + b.var(ddof=1) / len(b))
+    df = res.df if hasattr(res, "df") else (len(a) + len(b) - 2)
+    crit = stats.t.ppf(1 - ALPHA / 2, df)
+    return {
+        "mean_a": float(a.mean()),
+        "mean_b": float(b.mean()),
+        "n_a": int(len(a)),
+        "n_b": int(len(b)),
+        "diff": float(diff),
+        "ci_low": float(diff - crit * se),
+        "ci_high": float(diff + crit * se),
+        "t": float(res.statistic),
+        "df": float(df),
+        "p": float(res.pvalue),
+        "d": float(cohens_d(a, b)),
+        "se": float(se),
+    }
+
+
+def mean_ci(x: np.ndarray, alpha: float = ALPHA) -> tuple[float, float, float]:
+    x = np.asarray(x, dtype=float)
+    x = x[~np.isnan(x)]
+    n = len(x)
+    if n < 2:
+        return (float(x.mean()) if n else float("nan"), float("nan"), float("nan"))
+    m = x.mean()
+    se = x.std(ddof=1) / np.sqrt(n)
+    crit = stats.t.ppf(1 - alpha / 2, n - 1)
+    return float(m), float(m - crit * se), float(m + crit * se)
+
+
+def chi2_or_fisher(tab: pd.DataFrame) -> tuple[float, float, int, str]:
+    """Return (stat, p, dof, test_name)."""
+    if (tab.values < 5).any() and tab.shape == (2, 2):
+        odds, p = stats.fisher_exact(tab.values)
+        return float(odds), float(p), 1, "Fisher's exact"
+    chi2, p, dof, _ = stats.chi2_contingency(tab.values)
+    return float(chi2), float(p), int(dof), "chi-squared"
+
+
+# ------------------------------------------------------------------ load
+
+def load_data(csv_path: Path) -> pd.DataFrame:
+    df = pd.read_csv(csv_path)
+    print(f"Loaded {len(df)} rows from {csv_path}")
+    print("\nRaw columns and dtypes:")
+    print(df.dtypes.to_string())
+
+    # numeric coercion
+    num_cols = [
+        "condition", "safe_allocation", "hlxe_allocation", "hlxe_return",
+        "final_portfolio", "confidence", "age",
+        "time_on_page_seconds", "time_to_submit_seconds",
+    ]
+    for c in num_cols:
+        if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce")
-    for c in ("headline_type", "social_proof", "prior_investor"):
-        df[c] = df[c].astype(str).str.strip().str.lower()
+
+    # treasury allocation: derived
+    df["treasury_allocation"] = 1000 - df["hlxe_allocation"]
+
+    # binary outcome fallback
+    df["took_risky_bet"] = (df["hlxe_allocation"] > 500).astype(int)
+
+    # business/econ vs other
+    df["major_area_binary"] = np.where(
+        df["major_area"].astype(str).str.lower() == "business_econ",
+        "Business/Econ",
+        "Other",
+    )
+
+    # cell label for grouping
+    df["cell"] = list(zip(df["headline_type"], df["social_proof"]))
+
     return df
 
 
-def clean(df: pd.DataFrame, speeder_seconds: int) -> pd.DataFrame:
-    hr("STEP 1 — DATA CLEANING & VALIDATION")
-    n0 = len(df)
-    say(f"Loaded {n0} rows. Missing values per analytical column:")
-    for c in [DV, "headline_type", "social_proof", "confidence", "prior_investor",
-              "age", "gender", "major_area", "year_in_school"]:
-        say(f"  {c:22s} missing={int(df[c].isna().sum())}")
+# ------------------------------------------------------------------ sec 1: sanity
 
-    # Drop test rows + rows where allocation is internally broken.
-    vh = df["venmo_handle"].astype(str).str.strip()
-    df = df[vh.str.upper() != "TEST"].copy()
-    total = df["safe_allocation"] + df["hlxe_allocation"]
-    bad = (total - 1000).abs() > 1
-    if bad.any():
-        say(f"Dropped {int(bad.sum())} rows where safe+hlxe != 1000")
-    df = df[~bad].dropna(subset=[DV, "headline_type", "social_proof"])
-
-    df["headline_type"] = pd.Categorical(df["headline_type"],
-                                          categories=["neutral", "hyped"])
-    df["social_proof"] = pd.Categorical(df["social_proof"], categories=["no", "yes"])
-    df["cell"] = (df["headline_type"].astype(str) + " / " + df["social_proof"].astype(str))
-    df["treat"] = (~((df.headline_type == "neutral") & (df.social_proof == "no"))).astype(int)
-    df["arm"] = np.where(df.treat == 1, "treatment", "control")
-
-    # Speeder flag — kept in main analysis, removed in robustness check.
-    df["speeder"] = df["time_on_page_seconds"] < speeder_seconds
-    say(f"\nSpeeders (time_on_page < {speeder_seconds}s): {int(df['speeder'].sum())} "
-        f"(kept in main analysis, dropped in robustness rerun)")
-    # Age sanity — implausible values flagged for the robustness rerun too.
-    df["age_outlier"] = (df["age"] < 16) | (df["age"] > 40)
-    if df["age_outlier"].any():
-        say(f"Age outliers (<16 or >40): {int(df['age_outlier'].sum())} "
-            f"(values: {sorted(df.loc[df.age_outlier, 'age'].tolist())})")
-
-    say(f"\nAnalyzable N = {len(df)}.")
-    say(f"  Control cell ({CONTROL_DESC}): n={int((df.treat==0).sum())}")
-    say(f"  Any treatment (other 3 cells):                       n={int((df.treat==1).sum())}")
-    return df.reset_index(drop=True)
+def sample_summary(df: pd.DataFrame) -> str:
+    by_cond = df.groupby("condition").size().rename("n")
+    by_cell = (
+        df.groupby(["headline_type", "social_proof"]).size().rename("n").reset_index()
+    )
+    by_cell.to_csv(OUT / "tab_sample_by_cell.csv", index=False)
+    by_cond.to_csv(OUT / "tab_sample_by_condition.csv")
+    lines = [
+        f"Total N: **{len(df)}**",
+        "",
+        "Per-cell N:",
+        "",
+        "| condition | headline_type | social_proof | N |",
+        "|---|---|---|---|",
+    ]
+    for cell in CELL_ORDER:
+        h, s = cell
+        n = ((df["headline_type"] == h) & (df["social_proof"] == s)).sum()
+        cond = df.loc[(df["headline_type"] == h) & (df["social_proof"] == s), "condition"]
+        cond_num = int(cond.iloc[0]) if len(cond) else "?"
+        lines.append(f"| {cond_num} | {h} | {s} | {n} |")
+    return "\n".join(lines)
 
 
-# ================================================= balance table (Rady s.9)
-def balance_table(df: pd.DataFrame) -> pd.DataFrame:
-    """Control vs Treatment on age, gender, year, major, prior_investor.
-
-    Continuous: Welch t-test on the mean.   Categorical: chi-square on the
-    contingency table, plus one row per level showing the proportion.
-    """
-    hr("STEP 2 — BALANCE TABLE (Control vs Treatment, Rady s.9)")
+def balance_table(df: pd.DataFrame) -> tuple[str, list[str]]:
+    """Cross-tab demographics by condition. Returns markdown + list of imbalanced vars."""
     rows = []
-    ctrl = df[df.treat == 0]
-    trt = df[df.treat == 1]
+    imbalanced = []
 
-    # Continuous: age.
-    for var, label in [("age", "Age (years)"),
-                       ("time_on_page_seconds", "Time on page (s)"),
-                       ("confidence", "Confidence (1–5, post-decision)")]:
-        a = ctrl[var].dropna()
-        b = trt[var].dropna()
-        t = st.ttest_ind(b, a, equal_var=False)
-        rows.append({
-            "Variable": label,
-            "Control mean (SD)": f"{a.mean():.2f} ({a.std(ddof=1):.2f})",
-            "Treatment mean (SD)": f"{b.mean():.2f} ({b.std(ddof=1):.2f})",
-            "Diff (T − C)": f"{b.mean() - a.mean():+.2f}",
-            "p-value": f"{t.pvalue:.3f}",
-            "Test": "Welch t",
+    # age: one-way ANOVA
+    groups = [g["age"].dropna().values for _, g in df.groupby("condition")]
+    f, p = stats.f_oneway(*groups)
+    rows.append(("age (mean)", "one-way ANOVA", f"F={f:.2f}", fmt_p(p)))
+    if p < ALPHA:
+        imbalanced.append("age")
+
+    # categorical: chi-squared
+    cat_vars = ["gender", "year_in_school", "major_area", "prior_investor"]
+    for v in cat_vars:
+        tab = pd.crosstab(df[v], df["condition"])
+        stat, p, dof, name = chi2_or_fisher(tab)
+        rows.append((v, name, f"stat={stat:.2f}, dof={dof}", fmt_p(p)))
+        if p < ALPHA:
+            imbalanced.append(v)
+
+    bal = pd.DataFrame(rows, columns=["variable", "test", "statistic", "p"])
+    bal.to_csv(OUT / "tab_balance.csv", index=False)
+
+    # also save the cell-level means for age and proportion summaries
+    summary_rows = []
+    for cond, g in df.groupby("condition"):
+        summary_rows.append({
+            "condition": cond,
+            "n": len(g),
+            "age_mean": round(g["age"].mean(), 2),
+            "pct_woman": round((g["gender"] == "woman").mean() * 100, 1),
+            "pct_man": round((g["gender"] == "man").mean() * 100, 1),
+            "pct_business_econ": round((g["major_area"] == "business_econ").mean() * 100, 1),
+            "pct_prior_investor": round((g["prior_investor"] == "yes").mean() * 100, 1),
         })
+    summary_df = pd.DataFrame(summary_rows)
+    summary_df.to_csv(OUT / "tab_balance_summary.csv", index=False)
 
-    # Categorical: one row per level. Chi-square p-value + test name sit on
-    # the FIRST level row of each variable; the variable name prefixes the
-    # level label (e.g. "Gender: Woman") so every row carries data.
-    cat_vars = [
-        ("gender", "Gender", {"woman": "Woman", "man": "Man",
-                                "non_binary_or_other": "Non-binary / other"}),
-        ("year_in_school", "Year",
-         {"freshman": "Freshman", "sophomore": "Sophomore",
-          "junior": "Junior", "senior": "Senior", "graduate": "Graduate",
-          "other": "Other"}),
-        ("major_area", "Major",
-         {"business_econ": "Business / Econ", "stem": "STEM",
-          "social_sciences": "Social sciences", "humanities": "Humanities",
-          "other": "Other"}),
-        ("prior_investor", "Prior investor",
-         {"yes": "Yes", "no": "No"}),
-    ]
-    for var, header, levels in cat_vars:
-        ct = pd.crosstab(df[var], df["arm"])
-        for col in ("control", "treatment"):
-            if col not in ct.columns:
-                ct[col] = 0
-        ct = ct[["control", "treatment"]]
-        if ct.shape[0] > 1 and ct.values.sum() > 0:
-            chi2, p, _, _ = st.chi2_contingency(ct)
-        else:
-            chi2, p = np.nan, np.nan
-        first = True
-        for raw, pretty in levels.items():
-            n_c = int((ctrl[var] == raw).sum())
-            n_t = int((trt[var] == raw).sum())
-            if n_c + n_t == 0:
-                continue
-            p_c = n_c / len(ctrl) * 100 if len(ctrl) else 0
-            p_t = n_t / len(trt) * 100 if len(trt) else 0
-            rows.append({
-                "Variable": f"{header}: {pretty}",
-                "Control mean (SD)": f"{n_c} ({p_c:.1f}%)",
-                "Treatment mean (SD)": f"{n_t} ({p_t:.1f}%)",
-                "Diff (T − C)": f"{p_t - p_c:+.1f} pp",
-                "p-value": (f"{p:.3f}" if (first and not np.isnan(p)) else ""),
-                "Test": ("chi²" if first else ""),
-            })
-            first = False
-
-    bt = pd.DataFrame(rows)
-    say("\n" + bt.to_string(index=False))
-
-    n_c, n_t = int((df.treat == 0).sum()), int((df.treat == 1).sum())
-    bt.to_csv(OUT / "balance_table.csv", index=False)
-    _to_latex(bt, OUT / "balance_table.tex",
-              caption=(f"Balance table comparing Control ({CONTROL_DESC}) and any-Treatment cells. "
-                       f"Continuous variables: Welch two-sample t-test on means. "
-                       f"Categorical variables: chi-square on the contingency table; "
-                       f"row counts and within-arm percentages reported beneath the test row. "
-                       f"Cell sizes: Control $n={n_c}$, Treatment $n={n_t}$. "
-                       f"$p>.05$ on all rows is the expected pattern under random assignment."),
-              label="tab:balance",
-              column_format="lcccrl",
-              png_path=FIG / "t01_balance_table.png",
-              png_title=f"Balance: Control (n={n_c}) vs Treatment (n={n_t})",
-              png_footer="Continuous: Welch two-sample t-test. Categorical: chi-square on the "
-                         "contingency table; row counts and within-arm percentages shown below "
-                         "the test row. All p > .05 = no detectable imbalance (expected under "
-                         "random assignment).")
-    say(f"\nLaTeX  -> {OUT/'balance_table.tex'}\nCSV    -> {OUT/'balance_table.csv'}\n"
-        f"PNG    -> {FIG/'t01_balance_table.png'}")
-    return bt
+    md = ["| variable | test | statistic | p |", "|---|---|---|---|"]
+    for r in rows:
+        md.append(f"| {r[0]} | {r[1]} | {r[2]} | {r[3]} |")
+    md.append("")
+    md.append("Per-condition descriptives:")
+    md.append("")
+    md.append("| condition | N | age (mean) | % woman | % man | % business/econ | % prior investor |")
+    md.append("|---|---|---|---|---|---|---|")
+    for r in summary_rows:
+        md.append(
+            f"| {r['condition']} | {r['n']} | {r['age_mean']} | "
+            f"{r['pct_woman']}% | {r['pct_man']}% | "
+            f"{r['pct_business_econ']}% | {r['pct_prior_investor']}% |"
+        )
+    return "\n".join(md), imbalanced
 
 
-def balance_table_4cell(df: pd.DataFrame) -> pd.DataFrame:
-    """4-cell version: one-way ANOVA / chi-square across the four cells."""
-    say("\n(also producing the 4-cell version with ANOVA / chi-square across cells)")
-    rows = []
-    for var, label in [("age", "Age (years)"),
-                       ("time_on_page_seconds", "Time on page (s)"),
-                       ("confidence", "Confidence (1–5)")]:
-        cells = [g[var].dropna().values for _, g in df.groupby("cell", observed=True)]
-        F, p = st.f_oneway(*cells)
-        rec = {"Variable": label, "Test": "ANOVA F", "stat": f"{F:.3f}", "p-value": f"{p:.3f}"}
-        for cell, g in df.groupby("cell", observed=True):
-            rec[cell] = f"{g[var].mean():.2f} ({g[var].std(ddof=1):.2f})"
-        rows.append(rec)
-    for var, label in [("gender", "Gender"), ("year_in_school", "Year"),
-                       ("major_area", "Major area"), ("prior_investor", "Prior investor")]:
-        ct = pd.crosstab(df[var], df["cell"])
-        if ct.shape[0] > 1:
-            chi2, p, _, _ = st.chi2_contingency(ct)
-        else:
-            chi2, p = np.nan, np.nan
-        rec = {"Variable": label, "Test": "chi²",
-               "stat": f"{chi2:.3f}" if not np.isnan(chi2) else "—",
-               "p-value": f"{p:.3f}" if not np.isnan(p) else "—"}
-        for cell in df["cell"].cat.categories if hasattr(df["cell"], "cat") else df["cell"].unique():
-            rec[cell] = ""
-        rows.append(rec)
-    bt = pd.DataFrame(rows)
-    cells_order = ["neutral / no", "neutral / yes", "hyped / no", "hyped / yes"]
-    bt = bt[["Variable"] + cells_order + ["Test", "stat", "p-value"]]
-    bt.to_csv(OUT / "balance_table_4cell.csv", index=False)
-    cell_sizes = df.groupby("cell", observed=True).size().to_dict()
-    cell_sz_str = ", ".join(f"{c.replace(' / ', '/')}={n}" for c, n in cell_sizes.items())
-    _to_latex(bt, OUT / "balance_table_4cell.tex",
-              caption=(f"Four-cell balance check. Continuous covariates: one-way ANOVA across cells. "
-                       f"Categorical: chi-square on the contingency table. Cell sizes: {cell_sz_str}."),
-              label="tab:balance4",
-              png_path=FIG / "t02_balance_table_4cell.png",
-              png_title=f"Balance across the four cells ({cell_sz_str})",
-              png_footer="Continuous covariates: one-way ANOVA across cells. Categorical: "
-                         "chi-square on the contingency table.")
-    return bt
+def plot_outcome_dist(df: pd.DataFrame) -> tuple[str, bool]:
+    """Histogram per condition. Returns path and bimodal-flag."""
+    fig, axes = plt.subplots(2, 2, figsize=(10, 7), sharex=True, sharey=True)
+    bimodal_flags = []
+    for ax, cell in zip(axes.flat, CELL_ORDER):
+        h, s = cell
+        x = df.loc[(df["headline_type"] == h) & (df["social_proof"] == s), "hlxe_allocation"]
+        ax.hist(x, bins=20, range=(0, 1000), color="#31A354", edgecolor="white")
+        ax.set_title(CELL_LABELS[cell], fontsize=10)
+        ax.set_xlabel("HLXE allocation ($)")
+        ax.set_ylabel("Count")
+        # bimodal heuristic: >40% of mass at corners
+        if len(x):
+            corner_mass = ((x <= 50) | (x >= 950)).mean()
+            bimodal_flags.append(corner_mass > 0.4)
+    fig.suptitle("Distribution of HLXE allocation per cell")
+    fig.tight_layout()
+    path = OUT / "fig_outcome_distribution.png"
+    fig.savefig(path, dpi=130)
+    plt.close(fig)
+    return str(path.name), bool(np.mean(bimodal_flags) >= 0.5)
 
 
-# =============================================== summary stats by treatment group
-def summary_by_group(df: pd.DataFrame):
-    hr("STEP 3 — SUMMARY STATISTICS BY TREATMENT GROUP")
-    # Two-column (control vs any-treatment)
-    rows = []
-    for arm, sub in [("Control (neutral/no)", df[df.treat == 0]),
-                     ("Any treatment", df[df.treat == 1])]:
-        s = sub[DV]
-        rows.append({"Group": arm, "n": len(s),
-                     "Mean ($)": f"{s.mean():.1f}",
-                     "SD ($)": f"{s.std(ddof=1):.1f}",
-                     "SE of mean ($)": f"{s.std(ddof=1)/np.sqrt(len(s)):.1f}",
-                     "Median ($)": f"{s.median():.0f}",
-                     "Min": int(s.min()), "Max": int(s.max()),
-                     "% at $0":    f"{(s == 0).mean() * 100:.1f}%",
-                     "% at $500":  f"{(s == 500).mean() * 100:.1f}%",
-                     "% at $1000": f"{(s == 1000).mean() * 100:.1f}%"})
-    sg = pd.DataFrame(rows)
-    say("\nHLXE allocation by arm:\n" + sg.to_string(index=False))
-    sg.to_csv(OUT / "summary_by_arm.csv", index=False)
-    n_c = int((df.treat == 0).sum())
-    n_t = int((df.treat == 1).sum())
-    _to_latex(sg, OUT / "summary_by_arm.tex",
-              caption=(f"Summary statistics for the primary outcome (HLXE allocation, USD) "
-                       f"by experimental arm. \\textit{{Control}} is the neutral-headline / "
-                       f"no-social-proof cell ($n={n_c}$); \\textit{{Any treatment}} pools the "
-                       f"other three cells ($n={n_t}$). Boundary-clumping rows show the share "
-                       f"of responses at the three modal allocations ($\\$0$, $\\$500$, $\\$1000$)."),
-              label="tab:summary_arm",
-              column_format="lcccccccccc")
-    sg_t = sg.set_index("Group").T.reset_index().rename(columns={"index": "Statistic"})
-    _render_table_png(sg_t, FIG / "t03_summary_by_arm.png",
-                      title="HLXE allocation summary: Control vs Treatment",
-                      footer=(f"Control = neutral-headline / no-social-proof cell (n={n_c}); "
-                              f"Treatment pools the other three cells (n={n_t}). The last "
-                              f"three rows show the share of responses at the three modal "
-                              f"allocations."))
-
-    # 4-cell
-    g = df.groupby("cell", observed=True)[DV].agg(
-        n="count", mean="mean", sd=lambda x: x.std(ddof=1),
-        median="median", min="min", max="max").round(1)
-    say("\nHLXE allocation by cell:\n" + g.to_string())
-    g.to_csv(OUT / "summary_by_cell.csv")
-    g_tex = g.copy()
-    g_tex.columns = ["$n$", "Mean", "SD", "Median", "Min", "Max"]
-    g_tex.index.name = "Cell (headline / social proof)"
-    _to_latex(g_tex.reset_index(), OUT / "summary_by_cell.tex",
-              caption=("Per-cell summary statistics for HLXE allocation (USD). Cell sizes are "
-                       "set by block randomization and reported in the $n$ column. SD is the "
-                       "unbiased ($n{-}1$) sample standard deviation."),
-              label="tab:summary_cell",
-              png_path=FIG / "t04_summary_by_cell.png",
-              png_title="HLXE allocation by cell (USD)",
-              png_footer="Cell sizes (n column) are set by block randomization. SD is the "
-                         "unbiased (n-1) sample standard deviation.")
-    return sg, g
+def attention_filter(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
+    n_total = len(df)
+    too_fast = (df["time_on_page_seconds"] < ATTN_LOWER).sum()
+    too_slow = (df["time_on_page_seconds"] > ATTN_UPPER).sum()
+    mask = (df["time_on_page_seconds"] >= ATTN_LOWER) & (df["time_on_page_seconds"] <= ATTN_UPPER)
+    kept = df.loc[mask].copy()
+    info = {
+        "n_total": n_total,
+        "n_too_fast": int(too_fast),
+        "n_too_slow": int(too_slow),
+        "n_kept": int(len(kept)),
+        "lower": ATTN_LOWER,
+        "upper": ATTN_UPPER,
+    }
+    return kept, info
 
 
-# ====================================================== Welch t-tests (Rady s.13)
-def welch_test(a: pd.Series, b: pd.Series, label: str, name_a: str, name_b: str):
-    res = st.ttest_ind(b, a, equal_var=False)
-    ci = res.confidence_interval(0.95)
-    diff = b.mean() - a.mean()
-    pooled_sd = np.sqrt(((len(a)-1)*a.var(ddof=1) + (len(b)-1)*b.var(ddof=1))
-                        / (len(a)+len(b)-2))
-    d = diff / pooled_sd if pooled_sd else np.nan
-    say(f"\n[{label}]   H0: mean_{name_b} = mean_{name_a}   (two-sided Welch)")
-    say(f"  {name_a}: n={len(a):3d}  mean=${a.mean():7.2f}  SD=${a.std(ddof=1):6.2f}")
-    say(f"  {name_b}: n={len(b):3d}  mean=${b.mean():7.2f}  SD=${b.std(ddof=1):6.2f}")
-    say(f"  delta = ${diff:+.2f}   t = {res.statistic:+.3f}   df = {res.df:.1f}   "
-        f"p = {res.pvalue:.4f}")
-    say(f"  95% CI on delta: [${ci.low:+.2f}, ${ci.high:+.2f}]    Cohen's d = {d:+.3f}")
-    return {"comparison": label, "n_a": len(a), "n_b": len(b),
-            "mean_a": a.mean(), "mean_b": b.mean(),
-            "sd_a": a.std(ddof=1), "sd_b": b.std(ddof=1),
-            "diff": diff, "t": res.statistic, "df": res.df, "p": res.pvalue,
-            "ci_low": ci.low, "ci_high": ci.high, "cohens_d": d}
+# ------------------------------------------------------------------ sec 2: primary
 
-
-def hypothesis_tests(df: pd.DataFrame, alpha: float) -> pd.DataFrame:
-    hr("STEP 4 — HYPOTHESIS TESTS  (Welch t, two-sided; H0, p, 95% CI)")
-    say(f"Decision rule: pre-committed alpha = {alpha}.  Reject H0 when p < alpha.")
-    say("Note (Rady s.13–15): p is the probability of seeing data this extreme "
-        "*if H0 were true*. It is NOT P(H0 | data) and NOT an effect size.")
-    say("We 'fail to reject' rather than 'accept' — H0 is never proven, only undefeated.")
-
-    H = {"neutral": df.headline_type == "neutral", "hyped": df.headline_type == "hyped"}
-    S = {"no": df.social_proof == "no", "yes": df.social_proof == "yes"}
-    ctrl_mask = (df.headline_type == "neutral") & (df.social_proof == "no")
-    DV_s = df[DV]
-
-    rows = [
-        welch_test(DV_s[ctrl_mask], DV_s[~ctrl_mask],
-                   "PRIMARY: Any treatment vs Control", "control", "treatment"),
-        welch_test(DV_s[H["neutral"]], DV_s[H["hyped"]],
-                   "H1: Hyped vs Neutral (main effect of headline)", "neutral", "hyped"),
-        welch_test(DV_s[S["no"]], DV_s[S["yes"]],
-                   "H2: Social-proof vs None (main effect of social proof)", "no", "yes"),
-    ]
-    # Cell vs control (3-arm family) — Bonferroni for the family (Rady s.27).
-    cell_rows = []
-    for hl, sp in [("neutral", "yes"), ("hyped", "no"), ("hyped", "yes")]:
-        m = (df.headline_type == hl) & (df.social_proof == sp)
-        cell_rows.append(welch_test(DV_s[ctrl_mask], DV_s[m],
-                                     f"{hl}/{sp} vs Control", "control", f"{hl}/{sp}"))
-    say(f"\nBonferroni (Rady s.27): alpha_corrected = {alpha}/3 = {alpha/3:.4f} "
-        f"for the 3 cell-vs-control contrasts.")
-    rows.extend(cell_rows)
-
-    res = pd.DataFrame(rows)
-    res["p_bonferroni"] = np.nan
-    fam_mask = res["comparison"].str.contains("vs Control") & ~res["comparison"].str.startswith("PRIMARY")
-    res.loc[fam_mask, "p_bonferroni"] = (res.loc[fam_mask, "p"] * fam_mask.sum()).clip(upper=1.0)
-    res["reject_H0"] = (res["p"] < alpha)
-    res.loc[fam_mask, "reject_H0"] = res.loc[fam_mask, "p_bonferroni"] < alpha
-    res.round(4).to_csv(OUT / "hypothesis_tests.csv", index=False)
-
-    say("\nDecision summary (* = reject H0; — = fail to reject):")
-    for _, r in res.iterrows():
-        mark = "*" if r["reject_H0"] else "—"
-        p_str = (f"p={r['p']:.4f}" if pd.isna(r["p_bonferroni"])
-                 else f"p={r['p']:.4f}  p_Bonf={r['p_bonferroni']:.4f}")
-        say(f"  {mark}  {r['comparison']:55s} delta={r['diff']:+7.1f}  {p_str}")
-
-    # Non-parametric backup (Week 7 s.38: clumpy bounded DVs).
-    hr("STEP 4b — NON-PARAMETRIC BACKUP (40.7% of DV is at boundaries)")
-    kw = st.kruskal(*[g[DV].values for _, g in df.groupby("cell", observed=True)])
-    say(f"Kruskal-Wallis across 4 cells:  H = {kw.statistic:.3f}   p = {kw.pvalue:.4f}")
-    u = st.mannwhitneyu(DV_s[~ctrl_mask], DV_s[ctrl_mask], alternative="two-sided")
-    say(f"Mann-Whitney treat vs control:  U = {u.statistic:.0f}   p = {u.pvalue:.4f}")
+def main_effect_test(df: pd.DataFrame, var: str, level_a: str, level_b: str) -> dict:
+    a = df.loc[df[var] == level_a, "hlxe_allocation"].values
+    b = df.loc[df[var] == level_b, "hlxe_allocation"].values
+    res = welch_t(a, b)
+    res["var"] = var
+    res["level_a"] = level_a
+    res["level_b"] = level_b
     return res
 
 
-# ============================================ OLS regressions with HC1 (Rady s.12)
-def regressions(df: pd.DataFrame, alpha: float):
-    """Three nested OLS specs, all with HC1 robust SEs (Rady s.12)."""
-    hr("STEP 5 — OLS REGRESSIONS (HC1 robust SE, Rady s.12)")
-    raw = df[df.treat == 1][DV].mean() - df[df.treat == 0][DV].mean()
-    say(f"Raw difference in means (treat − control) = ${raw:+.2f}  (= OLS coefficient on treat)")
-
-    m1 = smf.ols(f"{DV} ~ treat", data=df).fit(cov_type="HC1")
-    m2 = smf.ols(f"{DV} ~ C(headline_type) * C(social_proof)", data=df).fit(cov_type="HC1")
-    # Model 3: add pre-registered controls. Drop near-empty major levels to avoid noise.
-    df3 = df.copy()
-    keep_majors = df3["major_area"].value_counts()
-    df3 = df3[df3["major_area"].isin(keep_majors[keep_majors >= 5].index)]
-    m3 = smf.ols(f"{DV} ~ treat + age + C(prior_investor) + C(gender) + C(major_area)",
-                 data=df3).fit(cov_type="HC1")
-
-    for name, m in [("(1) Simple  Y ~ treat", m1),
-                    ("(2) Factorial  Y ~ headline * social_proof", m2),
-                    ("(3) +Controls  Y ~ treat + age + prior_investor + gender + major", m3)]:
-        say(f"\n{name}")
-        say(m.summary().tables[1].as_text())
-        say(f"   R² = {m.rsquared:.4f}   N = {int(m.nobs)}")
-
-    # Pull headline numbers off model 1 (the primary spec).
-    b = m1.params["treat"]
-    se = m1.bse["treat"]
-    ci = m1.conf_int().loc["treat"]
-    pval = m1.pvalues["treat"]
-    say(f"\nPRIMARY POINT ESTIMATE  (Rady s.23–24 template):")
-    say(f"  beta-hat (treat) = ${b:+.2f}   HC1 SE = ${se:.2f}")
-    say(f"  95% CI = [${ci[0]:+.2f}, ${ci[1]:+.2f}]   z = {b/se:+.3f}   p = {pval:.4f}")
-    decision = "REJECT H0" if pval < alpha else "FAIL TO REJECT H0"
-    say(f"  Decision at alpha = {alpha}:  {decision}.")
-    if pval >= alpha:
-        say("  Interpretation: the pilot does not show evidence that the manipulation "
-            "shifted allocation. A Type II error (false negative) is plausible given "
-            "the pilot's MDE — see Step 6.")
-    else:
-        say("  Interpretation: at the pre-committed alpha, we reject H0. Type I error rate "
-            f"is bounded at {alpha} by the test's construction.")
-
-    # 2x2 ANOVA (Type II) on the factorial spec.
-    hr("STEP 5b — 2×2 ANOVA (Type II)")
-    tbl = anova_lm(m2, typ=2)
-    ss_res = tbl.loc["Residual", "sum_sq"]
-    tbl["partial_eta2"] = [ss/(ss+ss_res) if i != "Residual" else np.nan
-                            for i, ss in zip(tbl.index, tbl["sum_sq"])]
-    say(tbl.round(4).to_string())
-
-    # One unified regression table (Rady s.12 style).
-    reg_tbl = _three_model_table(m1, m2, m3)
-    reg_tbl.to_csv(OUT / "regression_table.csv")
-    _regression_table_tex(reg_tbl, OUT / "regression_table.tex",
-                          notes=[f"$N$ = {int(m1.nobs)}, {int(m2.nobs)}, {int(m3.nobs)} for "
-                                  "models (1)–(3). HC1 robust standard errors in parentheses. "
-                                  "Model (3) drops major-area cells with fewer than 5 respondents "
-                                  "(humanities, social\\_sciences, other) so the regression isn't "
-                                  "driven by 2--3 observations. ${}^{*}\\,p<.10$, ${}^{**}\\,p<.05$, "
-                                  "${}^{***}\\,p<.01$."])
-    _render_table_png(reg_tbl, FIG / "t05_regression_table.png",
-                      title="OLS of HLXE allocation: 3 nested specs (HC1 robust SE)",
-                      footer=(f"N = {int(m1.nobs)}, {int(m2.nobs)}, {int(m3.nobs)} for "
-                              "models (1)–(3). HC1 robust standard errors in parentheses below "
-                              "each coefficient. Model (3) drops major-area cells with fewer "
-                              "than 5 respondents (humanities, social_sciences, other) so the "
-                              "regression isn't driven by 2-3 observations. * p<.10, ** p<.05, "
-                              "*** p<.01."))
-    say(f"\nLaTeX regression table -> {OUT/'regression_table.tex'}")
-    say(f"PNG regression table   -> {FIG/'t05_regression_table.png'}")
-    return m1, m2, m3
+def two_by_two_anova(df: pd.DataFrame, outcome: str = "hlxe_allocation") -> pd.DataFrame:
+    sub = df[[outcome, "headline_type", "social_proof"]].dropna()
+    model = smf.ols(f"{outcome} ~ C(headline_type) * C(social_proof)", data=sub).fit()
+    anova_tbl = sm.stats.anova_lm(model, typ=2)
+    # partial eta squared: SS_effect / (SS_effect + SS_resid)
+    ss_resid = anova_tbl.loc["Residual", "sum_sq"]
+    anova_tbl["partial_eta2"] = anova_tbl["sum_sq"] / (anova_tbl["sum_sq"] + ss_resid)
+    anova_tbl.loc["Residual", "partial_eta2"] = np.nan
+    return anova_tbl
 
 
-# ===================================== prior-investor moderator (pre-registered)
-def moderator_prior(df: pd.DataFrame):
-    hr("STEP 6 — PRE-REGISTERED MODERATOR: prior_investor × treatment")
-    m = smf.ols(f"{DV} ~ treat * C(prior_investor)", data=df).fit(cov_type="HC1")
-    say(m.summary().tables[1].as_text())
-    say("\nInterpretation:")
-    say(" - 'treat' coefficient = effect of treatment among non-investors (reference).")
-    say(" - Interaction term = (effect on investors) − (effect on non-investors).")
-    inter_p = m.pvalues.get("treat:C(prior_investor)[T.yes]", np.nan)
-    inter_b = m.params.get("treat:C(prior_investor)[T.yes]", np.nan)
-    if not np.isnan(inter_p):
-        say(f" - Interaction beta = ${inter_b:+.2f}, p = {inter_p:.4f}: "
-            f"{'differential effect' if inter_p < 0.05 else 'no significant differential effect'} "
-            "between prior investors and non-investors.")
+def headline_figure(df: pd.DataFrame, fname: str, title_suffix: str = "") -> str:
+    means, ci_lo, ci_hi, labels = [], [], [], []
+    for cell in CELL_ORDER:
+        h, s = cell
+        x = df.loc[(df["headline_type"] == h) & (df["social_proof"] == s), "hlxe_allocation"]
+        m, lo, hi = mean_ci(x.values)
+        means.append(m)
+        ci_lo.append(lo)
+        ci_hi.append(hi)
+        labels.append(CELL_LABELS[cell])
+    means = np.array(means)
+    err = np.array([means - np.array(ci_lo), np.array(ci_hi) - means])
+    fig, ax = plt.subplots(figsize=(8.5, 5.5))
+    colors = ["#C7E9C0", "#A1D99B", "#41AB5D", "#006D2C"]
+    bars = ax.bar(range(4), means, yerr=err, capsize=6,
+                  color=colors, edgecolor="black", linewidth=0.8)
+    ax.set_xticks(range(4))
+    ax.set_xticklabels(labels, rotation=15, ha="right")
+    ax.set_ylabel("Mean HLXE allocation ($, 0–1000)")
+    ax.set_title(f"Mean HLXE allocation by condition (95% CI){title_suffix}")
+    ax.axhline(500, color="gray", linewidth=0.5, linestyle="--", alpha=0.6)
+    for bar, m in zip(bars, means):
+        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 15,
+                f"${m:.0f}", ha="center", fontsize=10)
+    ax.set_ylim(0, 1000)
+    fig.tight_layout()
+    path = OUT / fname
+    fig.savefig(path, dpi=140)
+    plt.close(fig)
+    return path.name
 
 
-# ===================================== confidence as secondary outcome (Step 4 sibling)
-def confidence_secondary(df: pd.DataFrame):
-    hr("STEP 7 — SECONDARY OUTCOME: post-decision confidence (1–5)")
-    ctrl = df[df.treat == 0]["confidence"].dropna()
-    trt = df[df.treat == 1]["confidence"].dropna()
-    welch_test(ctrl, trt, "Confidence: treatment vs control", "control", "treatment")
-    u = st.mannwhitneyu(trt, ctrl, alternative="two-sided")
-    say(f"  Mann-Whitney (ordinal-respecting):  U = {u.statistic:.0f}   p = {u.pvalue:.4f}")
-    m = smf.ols("confidence ~ C(headline_type) * C(social_proof)", data=df).fit(cov_type="HC1")
-    say("\n2×2 OLS on confidence (HC1):")
-    say(m.summary().tables[1].as_text())
-
-
-# ============================================ power, MDE, rollout sizing (Rady s.17, 24-25)
-def power_and_rollout(df: pd.DataFrame, alpha: float):
-    hr("STEP 8 — POWER, MDE, AND ROLLOUT SAMPLE SIZE (Rady s.17, 24–25)")
-    sigma = df.groupby("cell", observed=True)[DV].std(ddof=1).mean()
-    ctrl = df[df.treat == 0][DV]
-    treat = df[df.treat == 1][DV]
-    delta = treat.mean() - ctrl.mean()
-    se_delta = np.sqrt(ctrl.var(ddof=1)/len(ctrl) + treat.var(ddof=1)/len(treat))
-    n_total = len(df)
-
-    say(f"sigma-hat (pooled within-cell SD)  = ${sigma:.2f}     <- the pilot's headline deliverable")
-    say(f"delta-hat (treat − control)         = ${delta:+.2f}")
-    say(f"SE(delta-hat)                       = ${se_delta:.2f}")
-    say(f"Pilot total N = {n_total} (~{n_total/4:.0f} per cell, ~{n_total/2:.0f} per main-effect level)")
-
-    # Closed-form rollout n  (Rady s.17): n_per_group = 2*(z_a/2 + z_b)^2 * (sigma/delta)^2.
-    tt = TTestIndPower()
-
-    def n_per_group_z(sd: float, dlt: float, alpha: float, power: float) -> int:
-        if abs(dlt) < 1e-6:
-            return -1
-        za = st.norm.ppf(1 - alpha/2)
-        zb = st.norm.ppf(power)
-        return int(np.ceil(2 * (za + zb)**2 * (sd/abs(dlt))**2))
-
-    # MDE @ current n (per-arm level): solve for d given power=80%.
-    per_arm = n_total / 4
-    per_main = n_total / 2
-    hr("STEP 8a — MDE in this pilot (what could we have detected?)")
-    say("Closed-form MDE inverts the power formula at the pilot's n and the given alpha.")
-    for a in (alpha, 0.10):
-        for label, per in [("main-effect (n/2 per level)", per_main),
-                           ("cell-vs-control (n/4 per cell)", per_arm)]:
-            d_mde = tt.solve_power(nobs1=per, alpha=a, power=0.80, alternative="two-sided")
-            say(f"  alpha={a}, {label}:  d_MDE = {d_mde:.3f}   (= ${d_mde*sigma:.0f} in $)")
-
-    # Rollout table — Rady s.24-25 scenarios + Week 7 multipliers (s.44).
-    hr("STEP 8b — ROLLOUT SAMPLE SIZE (Rady s.24–25)")
-    say("Formula: n_per_group ~ 2 (z_{1-a/2} + z_{1-b})^2 (sigma/delta)^2  (Rady s.17)")
-    say(f"  At alpha={alpha}: 80% -> (z_a + z_b)^2 ~ "
-        f"{(st.norm.ppf(1-alpha/2)+st.norm.ppf(0.80))**2:.2f}, "
-        f"90% -> {(st.norm.ppf(1-alpha/2)+st.norm.ppf(0.90))**2:.2f}.")
-    if abs(delta) < 1:
-        say(f"\nWARNING: delta-hat = ${delta:+.2f} ~ 0. "
-            "The pilot effect is too small to size a rollout on; the n-formula explodes. "
-            "Below we report rollout n's for a *managerial* MDE ($25, $50, $75, $100) "
-            "instead of the pilot's empirical delta-hat.")
-        scenarios = [(d, f"${d}") for d in (25, 50, 75, 100)]
-    else:
-        scenarios = [(abs(delta), "pilot delta"),
-                     (abs(delta) * 0.7, "0.7 x pilot delta (winner's-curse adj.)"),
-                     (50.0, "$50 managerial MDE"),
-                     (100.0, "$100 managerial MDE")]
+def primary_results_table(df: pd.DataFrame) -> tuple[dict, pd.DataFrame, pd.DataFrame]:
+    sp = main_effect_test(df, "social_proof", "yes", "no")
+    hp = main_effect_test(df, "headline_type", "hyped", "neutral")
+    anova = two_by_two_anova(df)
 
     rows = []
-    for dlt, lbl in scenarios:
-        for power in (0.80, 0.90):
-            n_z = n_per_group_z(sigma, dlt, alpha, power)
-            n_t = int(np.ceil(tt.solve_power(effect_size=dlt/sigma,
-                                              alpha=alpha, power=power,
-                                              alternative="two-sided")))
-            rows.append({
-                "Assumed effect": lbl,
-                "delta ($)": f"{dlt:.0f}",
-                "Power": f"{int(power*100)}%",
-                "Cohen's d": f"{dlt/sigma:.3f}",
-                "n / group (z-formula)": n_z if n_z >= 0 else "undefined",
-                "n / group (t-formula)": n_t,
-                "Total N (2 arms)": (n_z * 2 if n_z >= 0 else "undefined"),
-            })
-    sens = pd.DataFrame(rows)
-    say("\n" + sens.to_string(index=False))
-    sens.to_csv(OUT / "rollout_sample_size.csv", index=False)
-    _to_latex(sens, OUT / "rollout_sample_size.tex",
-              caption=(f"Required sample size per arm to detect an effect at $\\alpha={alpha}$. "
-                       f"The $z$-formula is $n = 2(z_{{1-\\alpha/2}}+z_{{1-\\beta}})^2(\\hat\\sigma/\\delta)^2$ "
-                       f"(Rady deck, slide~17), evaluated at $\\hat\\sigma={sigma:.0f}$. "
-                       f"The $t$-formula uses Python's \\texttt{{TTestIndPower}} for cross-check. "
-                       f"Apply multipliers if needed: $\\times 1.3$ for Bonferroni across 3 tests, "
-                       f"$\\times 2$ for a powered sub-group cut, $\\times 1.5$ attrition buffer "
-                       f"(Week~7 deck, slide~44)."),
-              label="tab:rollout",
-              column_format="lccccccc",
-              png_path=FIG / "t06_rollout_sample_size.png",
-              png_title=f"Required n per arm to detect an effect (α={alpha}, σ̂=${sigma:.0f})",
-              png_footer=f"Formula: n_per_group ≈ 2 (z_{{1-α/2}} + z_{{1-β}})² (σ̂/δ)² "
-                         f"(Rady slide 17), evaluated at σ̂=${sigma:.0f}. The t-formula uses "
-                         f"statsmodels TTestIndPower. Multiply by ×1.3 for Bonferroni across 3 "
-                         f"tests, ×2 for a powered sub-group cut, ×1.5 attrition buffer (Wk 7 s.44).")
-    say(f"\nLaTeX rollout table -> {OUT/'rollout_sample_size.tex'}")
-
-    # Composed N* example.
-    if abs(delta) >= 1:
-        base = n_per_group_z(sigma, abs(delta)*0.7, alpha, 0.80)
-        say(f"\nComposed rollout N* (0.7 x delta, 80% power, alpha={alpha}):")
-        say(f"  base/arm = {base}  x1.3 multitest = {int(np.ceil(base*1.3))}"
-            f"  x2 subgroup = {int(np.ceil(base*1.3*2))}"
-            f"  x1.5 attrition = {int(np.ceil(base*1.3*2*1.5))}/arm")
-
-    # Simulation-based power (Week 7 s.38–39): the bounded clumpy DV violates normality.
-    hr("STEP 8c — SIMULATION-BASED POWER (Week 7 s.38–39)")
-    say("Bounded, clumpy DV (40%+ at boundaries) violates the normality assumption "
-        "behind the closed-form formula. Bootstrap-resample the empirical cells to get "
-        "an honest power curve.")
-    if abs(delta) < 1:
-        say("Skipped: pilot delta ~ 0, no effect to bootstrap power for. "
-            "(In a rollout, choose target n based on the *managerial* MDE table above.)")
-    else:
-        rng = np.random.default_rng(0)
-        for n in (50, 100, 200, 400):
-            hits = 0
-            reps = 2000
-            for _ in range(reps):
-                c = rng.choice(ctrl.values, n, replace=True)
-                t = rng.choice(treat.values, n, replace=True)
-                if st.ttest_ind(t, c, equal_var=False).pvalue < alpha:
-                    hits += 1
-            say(f"  n={n:>4}/arm: simulated power = {hits/reps:.3f}  ({reps} reps)")
-    return sigma, delta, se_delta
+    for label, r in [("social_proof (yes − no)", sp),
+                     ("headline_type (hyped − neutral)", hp)]:
+        rows.append({
+            "effect": label,
+            "mean_a": round(r["mean_a"], 1),
+            "mean_b": round(r["mean_b"], 1),
+            "diff": round(r["diff"], 1),
+            "ci_low": round(r["ci_low"], 1),
+            "ci_high": round(r["ci_high"], 1),
+            "t": round(r["t"], 2),
+            "df": round(r["df"], 1),
+            "p": fmt_p(r["p"]),
+            "cohens_d": round(r["d"], 2),
+            "n_a": r["n_a"],
+            "n_b": r["n_b"],
+        })
+    primary_tbl = pd.DataFrame(rows)
+    primary_tbl.to_csv(OUT / "tab_primary_tests.csv", index=False)
+    anova.to_csv(OUT / "tab_anova_2x2.csv")
+    return {"sp": sp, "hp": hp}, primary_tbl, anova
 
 
-# ======================================================================== robustness
-def robustness(df: pd.DataFrame, alpha: float):
-    hr("STEP 9 — ROBUSTNESS (drop speeders; drop age outliers; both)")
-    for label, mask in [
-        ("Drop speeders only", ~df.speeder),
-        ("Drop age outliers only", ~df.age_outlier),
-        ("Drop speeders AND age outliers", ~(df.speeder | df.age_outlier)),
-    ]:
-        sub = df[mask]
-        n = len(sub)
-        if n < 8:
-            continue
-        ctrl = sub[sub.treat == 0][DV]
-        trt = sub[sub.treat == 1][DV]
-        res = st.ttest_ind(trt, ctrl, equal_var=False)
-        ci = res.confidence_interval(0.95)
-        decision = "reject" if res.pvalue < alpha else "fail to reject"
-        say(f"  {label:34s} (N={n:3d}): "
-            f"delta=${trt.mean()-ctrl.mean():+7.2f}  "
-            f"p={res.pvalue:.4f}  "
-            f"95% CI [{ci.low:+.1f}, {ci.high:+.1f}]  -> {decision}")
+# ------------------------------------------------------------------ sec 3: subgroups
 
+def subgroup_anova(df: pd.DataFrame, moderator: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    sub = df[["hlxe_allocation", "headline_type", "social_proof", moderator]].dropna()
+    formula = f"hlxe_allocation ~ C(headline_type) * C(social_proof) * C({moderator})"
+    model = smf.ols(formula, data=sub).fit()
+    anova_tbl = sm.stats.anova_lm(model, typ=2)
+    ss_resid = anova_tbl.loc["Residual", "sum_sq"]
+    anova_tbl["partial_eta2"] = anova_tbl["sum_sq"] / (anova_tbl["sum_sq"] + ss_resid)
+    anova_tbl.loc["Residual", "partial_eta2"] = np.nan
 
-# ================================================================== figures
-def figures(df: pd.DataFrame):
-    hr("STEP 10 — FIGURES (publication style)")
-    # ---- 1. KDE bell curves: treatment vs control -------------------------
-    # Density (KDE) overlaid on a faint histogram so the boundary clumping at
-    # $0/$500/$1000 is still visible. Bandwidth: Scott's rule with a small
-    # bump to smooth the boundary spikes.
-    fig, ax = plt.subplots(figsize=(11, 5.5))
-    xs = np.linspace(0, 1000, 400)
-    bins = np.arange(0, 1050, 50)
-    for arm, color in [("control", "#4c72b0"), ("treatment", "#dd8452")]:
-        sub = df[df.arm == arm][DV].values
-        ax.hist(sub, bins=bins, density=True, color=color, alpha=0.18,
-                edgecolor="white", linewidth=0.4)
-        kde = st.gaussian_kde(sub, bw_method=0.35)
-        ax.plot(xs, kde(xs), color=color, linewidth=2.6,
-                label=f"{arm}\nn={len(sub)}\nM=${sub.mean():.0f}\nSD=${sub.std(ddof=1):.0f}")
-        ax.fill_between(xs, kde(xs), color=color, alpha=0.12)
-        ax.axvline(sub.mean(), color=color, linestyle="--", linewidth=1.2, alpha=0.7)
-    ax.set_xlabel("HLXE allocation ($)")
-    ax.set_ylabel("Density")
-    ax.set_title("Distribution of HLXE allocation: treatment vs control (KDE)")
-    ax.legend(frameon=True, loc="upper left", bbox_to_anchor=(1.02, 1.0),
-              borderaxespad=0)
-    ax.set_xlim(0, 1000)
-    fig.savefig(FIG / "01_density_overlay.png"); plt.close(fig)
-
-    # ---- 1b. Fitted Normal (parametric "bell curve") ---------------------
-    # Symmetric N(M, SD) PDFs ignoring the boundary clumping. Cleaner shape
-    # for slides, but it misrepresents the bimodal/clumpy reality — present
-    # alongside the KDE version, not instead of.
-    fig, ax = plt.subplots(figsize=(11, 5.5))
-    for arm, color in [("control", "#4c72b0"), ("treatment", "#dd8452")]:
-        sub = df[df.arm == arm][DV].values
-        m, s = sub.mean(), sub.std(ddof=1)
-        pdf = st.norm.pdf(xs, loc=m, scale=s)
-        ax.plot(xs, pdf, color=color, linewidth=2.8,
-                label=f"{arm}\nN(${m:.0f}, ${s:.0f}²)\nn={len(sub)}")
-        ax.fill_between(xs, pdf, color=color, alpha=0.18)
-        ax.axvline(m, color=color, linestyle="--", linewidth=1.2, alpha=0.7)
-    ax.set_xlabel("HLXE allocation ($)")
-    ax.set_ylabel("Density (fitted Normal)")
-    ax.set_title("Fitted Normal bell curves: treatment vs control")
-    ax.legend(frameon=True, loc="upper left", bbox_to_anchor=(1.02, 1.0),
-              borderaxespad=0)
-    ax.set_xlim(0, 1000)
-    fig.text(0.5, -0.02,
-             "Note: parametric Normal fit. The empirical distribution is bimodal "
-             "(40% of responses at $0/$500/$1000) — see 01_density_overlay for the KDE.",
-             ha="center", fontsize=9, style="italic", color="#555")
-    fig.savefig(FIG / "01b_gaussian_overlay.png"); plt.close(fig)
-
-    # ---- 2. 4-cell density curves on one panel ----------------------------
-    cells = ["neutral / no", "neutral / yes", "hyped / no", "hyped / yes"]
-    colors = {"neutral / no": "#4c72b0", "neutral / yes": "#55a868",
-              "hyped / no": "#dd8452", "hyped / yes": "#c44e52"}
-    fig, ax = plt.subplots(figsize=(12, 6))
-    for cell in cells:
-        sub = df[df.cell == cell][DV].values
-        kde = st.gaussian_kde(sub, bw_method=0.4)
-        ax.plot(xs, kde(xs), color=colors[cell], linewidth=2.4,
-                label=f"{cell}\nM=${sub.mean():.0f}\nSD=${sub.std(ddof=1):.0f}")
-        ax.fill_between(xs, kde(xs), color=colors[cell], alpha=0.10)
-    ax.set_xlabel("HLXE allocation ($)")
-    ax.set_ylabel("Density")
-    ax.set_title(f"HLXE allocation density by experimental cell (KDE, N={len(df)})")
-    ax.legend(frameon=True, loc="upper left", bbox_to_anchor=(1.02, 1.0),
-              borderaxespad=0)
-    ax.set_xlim(0, 1000)
-    fig.savefig(FIG / "02_density_by_cell.png"); plt.close(fig)
-
-    # ---- 2b. 4-cell fitted Normal bell curves ----------------------------
-    fig, ax = plt.subplots(figsize=(12, 6))
-    for cell in cells:
-        sub = df[df.cell == cell][DV].values
-        m, s = sub.mean(), sub.std(ddof=1)
-        pdf = st.norm.pdf(xs, loc=m, scale=s)
-        ax.plot(xs, pdf, color=colors[cell], linewidth=2.4,
-                label=f"{cell}\nN(${m:.0f}, ${s:.0f}²)")
-        ax.fill_between(xs, pdf, color=colors[cell], alpha=0.08)
-    ax.set_xlabel("HLXE allocation ($)")
-    ax.set_ylabel("Density (fitted Normal)")
-    ax.set_title(f"Fitted Normal bell curves by experimental cell (N={len(df)})")
-    ax.legend(frameon=True, loc="upper left", bbox_to_anchor=(1.02, 1.0),
-              borderaxespad=0)
-    ax.set_xlim(0, 1000)
-    fig.text(0.5, -0.02,
-             "Note: parametric Normal fits. The empirical distribution is bimodal "
-             "(40% of responses at $0/$500/$1000) — see 02_density_by_cell for the KDE.",
-             ha="center", fontsize=9, style="italic", color="#555")
-    fig.savefig(FIG / "02b_gaussian_by_cell.png"); plt.close(fig)
-
-    # ---- 3. Bar chart of means with 95% CI error bars (Rady s.10) ---------
-    fig, ax = plt.subplots(figsize=(11, 6.5))
-    order = ["neutral / no", "neutral / yes", "hyped / no", "hyped / yes"]
-    sub = df[df["cell"].isin(order)].copy()
-    means = sub.groupby("cell", observed=True)[DV].mean().reindex(order)
-    sems = sub.groupby("cell", observed=True)[DV].sem().reindex(order)
-    ns = sub.groupby("cell", observed=True)[DV].count().reindex(order)
-    ci95 = sems * st.t.ppf(0.975, ns - 1)
-    cell_colors = ["#4c72b0" if c == "neutral / no" else "#dd8452" for c in order]
-    bars = ax.bar(order, means.values, yerr=ci95.values, capsize=8,
-                  color=cell_colors, edgecolor="black", linewidth=0.6, alpha=0.9)
-    for i, (m, n, c) in enumerate(zip(means.values, ns.values, ci95.values)):
-        ax.text(i, m + c + 18, f"${m:.0f}\n(n={n})",
-                ha="center", va="bottom", fontsize=11)
-    ax.set_ylabel("Mean HLXE allocation ($)")
-    ax.set_xlabel("Cell (headline / social proof)")
-    ax.set_title("HLXE allocation by cell (mean ± 95% CI)")
-    ax.set_ylim(0, max(means.values + ci95.values) * 1.20)
-    ax.tick_params(axis="x", rotation=12)
-    from matplotlib.patches import Patch
-    ax.legend(handles=[Patch(facecolor="#4c72b0", edgecolor="black",
-                              label="Control\n(neutral/no)"),
-                       Patch(facecolor="#dd8452", edgecolor="black",
-                              label="Treatment\ncells")],
-              loc="upper left", bbox_to_anchor=(1.02, 1.0),
-              borderaxespad=0, frameon=True)
-    fig.savefig(FIG / "03_bars_ci.png"); plt.close(fig)
-
-    # ---- 4. 2x2 interaction plot ------------------------------------------
-    fig, ax = plt.subplots(figsize=(10, 6))
-    for hl, color, marker in [("neutral", "#4c72b0", "o"), ("hyped", "#dd8452", "s")]:
-        sub = df[df.headline_type == hl]
-        ms = sub.groupby("social_proof", observed=True)[DV].mean()
-        ses = sub.groupby("social_proof", observed=True)[DV].sem()
-        ns2 = sub.groupby("social_proof", observed=True)[DV].count()
-        ci = ses * st.t.ppf(0.975, ns2 - 1)
-        ax.errorbar(["no", "yes"], ms.reindex(["no", "yes"]).values,
-                    yerr=ci.reindex(["no", "yes"]).values,
-                    label=f"{hl}\nheadline", marker=marker, capsize=6,
-                    color=color, linewidth=2, markersize=10)
-    ax.set_xlabel("Social proof")
-    ax.set_ylabel("Mean HLXE allocation ($)")
-    ax.set_title("Headline × social-proof interaction (mean ± 95% CI)")
-    ax.legend(frameon=True, loc="upper left", bbox_to_anchor=(1.02, 1.0),
-              borderaxespad=0)
-    fig.savefig(FIG / "04_interaction.png"); plt.close(fig)
-
-    # ---- 5. Pilot CI vs illustrative rollout CI ---------------------------
-    ctrl = df[df.treat == 0][DV]; treat = df[df.treat == 1][DV]
-    delta = treat.mean() - ctrl.mean()
-    se = np.sqrt(ctrl.var(ddof=1)/len(ctrl) + treat.var(ddof=1)/len(treat))
-    fig, ax = plt.subplots(figsize=(11, 5))
-    ax.errorbar([delta], [1], xerr=[1.96*se], fmt="o", capsize=8, markersize=10,
-                color="#4c72b0", label=f"Pilot\n(N={len(df)})")
-    ax.errorbar([delta], [0], xerr=[1.96*se*np.sqrt(len(df)/600)], fmt="s",
-                capsize=8, markersize=10, color="#dd8452",
-                label="Illustrative\nrollout\n(N≈600)")
-    ax.axvline(0, color="grey", ls="--", linewidth=1.4)
-    ax.set_yticks([0, 1])
-    ax.set_yticklabels(["rollout", "pilot"])
-    ax.set_xlabel("Estimated treatment effect on HLXE allocation ($)")
-    ax.set_title("Same point estimate, different precision: pilot vs scaled-up rollout (95% CI)")
-    ax.legend(frameon=True, loc="upper left", bbox_to_anchor=(1.02, 1.0),
-              borderaxespad=0)
-    fig.savefig(FIG / "05_pilot_vs_rollout_ci.png"); plt.close(fig)
-
-    say(f"Saved 5 figures -> {FIG}/")
-
-
-# ============================================== latex helpers (publication style)
-def _to_latex(df: pd.DataFrame, path: Path, caption: str, label: str,
-              column_format: str | None = None,
-              png_path: Path | None = None, png_title: str | None = None,
-              png_footer: str | None = None):
-    """Booktabs-style LaTeX. Optionally render a PNG copy for slide decks."""
-    if column_format is None:
-        column_format = "l" + "c" * (df.shape[1] - 1)
-    body = df.to_latex(index=False, escape=True, column_format=column_format,
-                       float_format=lambda x: f"{x:.3f}")
-    tex = (
-        "% requires \\usepackage{booktabs, threeparttable}\n"
-        "\\begin{table}[!htbp]\n  \\centering\n  \\begin{threeparttable}\n"
-        f"  \\caption{{{caption}}}\n  \\label{{{label}}}\n"
-        f"  {body}"
-        "  \\end{threeparttable}\n\\end{table}\n"
+    means = (
+        sub.groupby([moderator, "headline_type", "social_proof"])["hlxe_allocation"]
+        .agg(["mean", "std", "count"])
+        .round(1)
+        .reset_index()
     )
-    path.write_text(tex)
-    if png_path is not None:
-        _render_table_png(df, png_path, title=png_title or "",
-                          footer=png_footer or caption)
+    return anova_tbl, means
 
 
-def _render_table_png(df: pd.DataFrame, path: Path,
-                      title: str = "", footer: str = "",
-                      col_widths: list[float] | None = None,
-                      max_width_per_col: float = 1.9,
-                      first_col_factor: float = 1.6):
-    """Render a DataFrame as a publication-quality PNG table for slide decks."""
-    n_rows = len(df) + 1            # +1 for header
-    n_cols = df.shape[1]
-
-    # column widths: first column wider (variable / row labels), others uniform
-    if col_widths is None:
-        col_widths = [max_width_per_col * first_col_factor] + \
-                     [max_width_per_col] * (n_cols - 1)
-    total_w = sum(col_widths)
-    row_h = 0.42
-    title_h = 0.55 if title else 0.0
-    footer_h = 0.0
-    if footer:
-        # rough wrap estimate; footer typically wraps to ~2-3 lines for long captions
-        wrap_chars = max(int(total_w * 12), 60)
-        footer_lines = max(1, int(np.ceil(len(footer) / wrap_chars)))
-        footer_h = 0.30 * footer_lines + 0.15
-
-    fig_w = max(total_w + 0.6, 6.5)
-    fig_h = title_h + row_h * n_rows + footer_h + 0.4
-    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
-    ax.set_axis_off()
-    ax.set_xlim(0, total_w)
-    ax.set_ylim(0, fig_h)
-
-    # title
-    y_cursor = fig_h - 0.1
-    if title:
-        ax.text(total_w / 2, y_cursor - 0.05, title,
-                ha="center", va="top", fontsize=14, fontweight="bold")
-        y_cursor -= title_h
-
-    # column x edges
-    x_edges = [0.0]
-    for w in col_widths:
-        x_edges.append(x_edges[-1] + w)
-
-    # header band
-    header_y_top = y_cursor
-    header_y_bot = y_cursor - row_h
-    from matplotlib.patches import Rectangle
-    ax.add_patch(Rectangle((0, header_y_bot), total_w, row_h,
-                           facecolor="#2c3e50", edgecolor="none"))
-    for j, col in enumerate(df.columns):
-        # header: first col left-aligned, others centered
-        cx = x_edges[j] + (0.10 if j == 0 else col_widths[j] / 2)
-        ax.text(cx, header_y_bot + row_h / 2, str(col),
-                ha="left" if j == 0 else "center", va="center",
-                color="white", fontsize=10.5, fontweight="bold")
-
-    # body rows
-    for i, (_, row) in enumerate(df.iterrows()):
-        y_top = header_y_bot - i * row_h
-        y_bot = y_top - row_h
-        # zebra stripe
-        if i % 2 == 0:
-            ax.add_patch(Rectangle((0, y_bot), total_w, row_h,
-                                   facecolor="#f4f6f8", edgecolor="none"))
-        for j, val in enumerate(row):
-            sval = "" if (val is None or (isinstance(val, float) and np.isnan(val))) else str(val)
-            # right-align numeric-looking cells, left-align the first column,
-            # center the rest
-            if j == 0:
-                # row labels: indent leading spaces are visual hints in our balance tables
-                indent = len(sval) - len(sval.lstrip())
-                cx = x_edges[j] + 0.10 + indent * 0.07
-                ax.text(cx, y_bot + row_h / 2, sval.lstrip(),
-                        ha="left", va="center", fontsize=10)
-            else:
-                cx = x_edges[j] + col_widths[j] / 2
-                ax.text(cx, y_bot + row_h / 2, sval,
-                        ha="center", va="center", fontsize=10)
-
-    # top and bottom rules
-    body_bot = header_y_bot - len(df) * row_h
-    ax.plot([0, total_w], [header_y_top, header_y_top], color="black", linewidth=1.2)
-    ax.plot([0, total_w], [header_y_bot, header_y_bot], color="black", linewidth=0.8)
-    ax.plot([0, total_w], [body_bot, body_bot], color="black", linewidth=1.2)
-
-    # footer
-    if footer:
-        import textwrap
-        wrap_chars = max(int(total_w * 12), 60)
-        wrapped = textwrap.fill(footer, width=wrap_chars)
-        ax.text(0.05, body_bot - 0.15, wrapped,
-                ha="left", va="top", fontsize=8.5, color="#444", style="italic")
-
-    fig.savefig(path, dpi=200, bbox_inches="tight",
-                facecolor="white")
+def subgroup_figure(df: pd.DataFrame, moderator: str, fname: str, title: str) -> str:
+    sub = df.dropna(subset=["hlxe_allocation", moderator])
+    levels = sorted(sub[moderator].dropna().unique())
+    width = 0.35
+    x = np.arange(4)
+    fig, ax = plt.subplots(figsize=(9, 5.5))
+    palette = ["#A1D99B", "#006D2C", "#74C476", "#00441B"]
+    truncated_marks = []  # (xpos, ypos, direction) for cells where CI was clipped
+    for i, lvl in enumerate(levels):
+        means, errs = [], []
+        ns = []
+        for cell in CELL_ORDER:
+            h, s = cell
+            xv = sub.loc[
+                (sub[moderator] == lvl)
+                & (sub["headline_type"] == h)
+                & (sub["social_proof"] == s),
+                "hlxe_allocation",
+            ].values
+            ns.append(len(xv))
+            m, lo, hi = mean_ci(xv)
+            m_disp = m if not np.isnan(m) else 0
+            lo_disp = lo if not np.isnan(lo) else m_disp
+            hi_disp = hi if not np.isnan(hi) else m_disp
+            # outcome is bounded [0, 1000] — clip CI to that range and mark
+            lo_clip = max(0.0, lo_disp)
+            hi_clip = min(1000.0, hi_disp)
+            means.append(m_disp)
+            errs.append((m_disp - lo_clip, hi_clip - m_disp))
+            xpos = x[CELL_ORDER.index(cell)] + (i - (len(levels) - 1) / 2) * width
+            if hi_disp > 1000.0:
+                truncated_marks.append((xpos, 995, "▲"))
+            if lo_disp < 0.0:
+                truncated_marks.append((xpos, 5, "▼"))
+        errs_arr = np.array(errs).T
+        bars = ax.bar(x + (i - (len(levels) - 1) / 2) * width, means, width,
+                      yerr=errs_arr, capsize=4,
+                      label=f"{moderator}={lvl}", color=palette[i % len(palette)],
+                      edgecolor="black", linewidth=0.6)
+        for bar, m, n in zip(bars, means, ns):
+            ax.text(bar.get_x() + bar.get_width() / 2, 20,
+                    f"n={n}", ha="center", fontsize=8, color="#333")
+    for xpos, ypos, sym in truncated_marks:
+        ax.text(xpos, ypos, sym, ha="center", va="center", fontsize=10, color="#B00")
+    ax.set_xticks(x)
+    ax.set_xticklabels([CELL_LABELS[c] for c in CELL_ORDER], rotation=15, ha="right")
+    ax.set_ylabel("Mean HLXE allocation ($)")
+    ax.set_title(title)
+    ax.legend()
+    ax.set_ylim(0, 1000)
+    if truncated_marks:
+        fig.text(0.5, 0.01,
+                 "▲/▼ = 95% CI extends beyond outcome bounds [0, 1000]; clipped for display",
+                 ha="center", va="bottom", fontsize=8, color="#B00")
+    fig.tight_layout(rect=(0, 0.04, 1, 1))
+    path = OUT / fname
+    fig.savefig(path, dpi=140)
     plt.close(fig)
+    return path.name
 
 
-def _three_model_table(m1, m2, m3) -> pd.DataFrame:
-    """One regression table, three columns (Rady s.12 style)."""
-    rows: list[dict] = []
-    name_map = {
-        "Intercept": "Intercept",
-        "treat": "Treatment (any of 3 cells)",
-        "C(headline_type)[T.hyped]": "Hyped headline (vs neutral)",
-        "C(social_proof)[T.yes]": "Social proof: yes (vs no)",
-        "C(headline_type)[T.hyped]:C(social_proof)[T.yes]": "Hyped × Social proof",
-        "age": "Age",
-        "C(prior_investor)[T.yes]": "Prior investor (yes)",
-        "C(gender)[T.woman]": "Gender: woman",
-        "C(gender)[T.non_binary_or_other]": "Gender: NB / other",
-        "C(major_area)[T.stem]": "Major: STEM",
-        "C(major_area)[T.business_econ]": "Major: business/econ",
-    }
-    all_params = []
-    for m in (m1, m2, m3):
-        for p in m.params.index:
-            if p not in all_params:
-                all_params.append(p)
-    # Stable display order.
-    order = [p for p in name_map if p in all_params] + [p for p in all_params if p not in name_map]
+# ------------------------------------------------------------------ sec 4: secondary
 
-    def fmt(m, p):
-        if p not in m.params.index:
-            return ("", "")
-        b = m.params[p]
-        se = m.bse[p]
-        pv = m.pvalues[p]
-        star = "$^{***}$" if pv < .01 else "$^{**}$" if pv < .05 else "$^{*}$" if pv < .10 else ""
-        return (f"{b:+.2f}{star}", f"({se:.2f})")
+def confidence_anova(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    sub = df[["confidence", "headline_type", "social_proof"]].dropna()
+    model = smf.ols("confidence ~ C(headline_type) * C(social_proof)", data=sub).fit()
+    anova_tbl = sm.stats.anova_lm(model, typ=2)
+    ss_resid = anova_tbl.loc["Residual", "sum_sq"]
+    anova_tbl["partial_eta2"] = anova_tbl["sum_sq"] / (anova_tbl["sum_sq"] + ss_resid)
+    anova_tbl.loc["Residual", "partial_eta2"] = np.nan
 
-    for p in order:
-        b1, s1 = fmt(m1, p)
-        b2, s2 = fmt(m2, p)
-        b3, s3 = fmt(m3, p)
-        if not any([b1, b2, b3]):
-            continue
-        label = name_map.get(p, p)
-        rows.append({"Variable": label,
-                     "(1) Simple": b1, "(2) Factorial": b2, "(3) +Controls": b3})
-        rows.append({"Variable": "", "(1) Simple": s1, "(2) Factorial": s2, "(3) +Controls": s3})
-
-    rows.append({"Variable": "Observations",
-                 "(1) Simple": f"{int(m1.nobs)}",
-                 "(2) Factorial": f"{int(m2.nobs)}",
-                 "(3) +Controls": f"{int(m3.nobs)}"})
-    rows.append({"Variable": "$R^2$",
-                 "(1) Simple": f"{m1.rsquared:.4f}",
-                 "(2) Factorial": f"{m2.rsquared:.4f}",
-                 "(3) +Controls": f"{m3.rsquared:.4f}"})
-    rows.append({"Variable": "Robust SE", "(1) Simple": "HC1",
-                 "(2) Factorial": "HC1", "(3) +Controls": "HC1"})
-    return pd.DataFrame(rows)
-
-
-def _regression_table_tex(tbl: pd.DataFrame, path: Path, notes: list[str]):
-    body = tbl.to_latex(index=False, escape=False, column_format="lccc")
-    note_block = "\n".join(f"      \\item {n}" for n in notes)
-    tex = (
-        "% requires \\usepackage{booktabs, threeparttable}\n"
-        "\\begin{table}[!htbp]\n  \\centering\n  \\begin{threeparttable}\n"
-        "  \\caption{OLS regressions of HLXE allocation (USD) on treatment "
-        "and pre-registered controls. Heteroskedasticity-robust (HC1) standard "
-        "errors are reported in parentheses below each coefficient.}\n"
-        "  \\label{tab:regressions}\n"
-        f"  {body}"
-        "    \\begin{tablenotes}[para,flushleft]\\footnotesize\n"
-        f"{note_block}\n"
-        "    \\end{tablenotes}\n"
-        "  \\end{threeparttable}\n\\end{table}\n"
+    means = (
+        sub.groupby(["headline_type", "social_proof"])["confidence"]
+        .agg(["mean", "std", "count"])
+        .round(2)
+        .reset_index()
     )
-    path.write_text(tex)
+    return anova_tbl, means
 
 
-# ============================================================ results memo
-def write_memo(df, sigma, delta, se_delta, m1_results, alpha):
-    """One narrative document tying figures + tables to the rubric."""
-    b, se, ci_low, ci_high, p = m1_results
-    decision = "reject H0" if p < alpha else "fail to reject H0"
-    text = f"""# MGT 160 Pilot — Results Memo
+def confidence_allocation_corr(df: pd.DataFrame) -> tuple[dict, pd.DataFrame]:
+    sub = df[["confidence", "hlxe_allocation", "headline_type", "social_proof"]].dropna()
+    r_all, p_all = stats.pearsonr(sub["confidence"], sub["hlxe_allocation"])
+    overall = {"scope": "overall", "n": len(sub), "r": round(r_all, 2), "p": fmt_p(p_all)}
 
-Maps to the Wk-8 rubric: (1) figure, (2) test with H0 + p + 95% CI,
-(3) power/MDE given the variance estimate, (4) generalizability.
+    rows = [overall]
+    for cell in CELL_ORDER:
+        h, s = cell
+        c = sub[(sub["headline_type"] == h) & (sub["social_proof"] == s)]
+        if len(c) >= 3:
+            r, p = stats.pearsonr(c["confidence"], c["hlxe_allocation"])
+            rows.append({
+                "scope": CELL_LABELS[cell],
+                "n": len(c),
+                "r": round(r, 2),
+                "p": fmt_p(p),
+            })
+        else:
+            rows.append({"scope": CELL_LABELS[cell], "n": len(c),
+                         "r": "n/a", "p": "n<3"})
+    tbl = pd.DataFrame(rows)
+    tbl.to_csv(OUT / "tab_confidence_corr.csv", index=False)
+    return overall, tbl
 
-## Headline numbers
 
-| Quantity | Value |
+def timing_test(df: pd.DataFrame, col: str) -> tuple[pd.DataFrame, dict]:
+    medians = (
+        df.groupby(["headline_type", "social_proof"])[col]
+        .median()
+        .round(1)
+        .reset_index()
+        .rename(columns={col: f"{col}_median"})
+    )
+    hyped = df.loc[df["headline_type"] == "hyped", col].dropna().values
+    neutral = df.loc[df["headline_type"] == "neutral", col].dropna().values
+    u, p = stats.mannwhitneyu(hyped, neutral, alternative="two-sided")
+    test = {
+        "n_hyped": int(len(hyped)),
+        "n_neutral": int(len(neutral)),
+        "median_hyped": float(np.median(hyped)),
+        "median_neutral": float(np.median(neutral)),
+        "U": float(u),
+        "p": float(p),
+    }
+    return medians, test
+
+
+# ------------------------------------------------------------------ sec 5: power
+
+def power_table(sp_result: dict, hp_result: dict, df: pd.DataFrame) -> pd.DataFrame:
+    analyzer = TTestIndPower()
+    rows = []
+    for label, r in [("social_proof", sp_result), ("headline_type", hp_result)]:
+        n_per_group = int(np.mean([r["n_a"], r["n_b"]]))
+        d_obs = abs(r["d"])
+        if d_obs > 0 and not np.isnan(d_obs):
+            achieved = analyzer.solve_power(effect_size=d_obs, nobs1=n_per_group,
+                                            alpha=ALPHA, ratio=1.0, alternative="two-sided")
+            mde = analyzer.solve_power(effect_size=None, nobs1=n_per_group,
+                                       alpha=ALPHA, power=0.80, ratio=1.0,
+                                       alternative="two-sided")
+            n_needed = analyzer.solve_power(effect_size=d_obs, alpha=ALPHA,
+                                            power=0.80, ratio=1.0,
+                                            alternative="two-sided")
+        else:
+            achieved = np.nan
+            mde = analyzer.solve_power(effect_size=None, nobs1=n_per_group,
+                                       alpha=ALPHA, power=0.80, ratio=1.0,
+                                       alternative="two-sided")
+            n_needed = np.nan
+        rows.append({
+            "contrast": label,
+            "n_per_group": n_per_group,
+            "total_n": r["n_a"] + r["n_b"],
+            "observed_d": round(d_obs, 3) if not np.isnan(d_obs) else "n/a",
+            "achieved_power": round(achieved, 3) if not np.isnan(achieved) else "n/a",
+            "MDE_d_at_0.80": round(mde, 3),
+            "n_per_group_needed_for_0.80": (
+                int(np.ceil(n_needed)) if not np.isnan(n_needed) else "n/a"
+            ),
+        })
+    tbl = pd.DataFrame(rows)
+    tbl.to_csv(OUT / "tab_power_mde.csv", index=False)
+    return tbl
+
+
+# ------------------------------------------------------------------ report
+
+@dataclass
+class ReportPieces:
+    sample_md: str
+    balance_md: str
+    imbalanced: list
+    dist_fig: str
+    bimodal: bool
+    attn_info: dict
+    primary_tbl_full: pd.DataFrame
+    anova_full: pd.DataFrame
+    headline_fig_full: str
+    sp_full: dict
+    hp_full: dict
+    sub_prior_anova: pd.DataFrame
+    sub_prior_means: pd.DataFrame
+    sub_prior_fig: str
+    sub_major_anova: pd.DataFrame
+    sub_major_means: pd.DataFrame
+    sub_major_fig: str
+    conf_anova: pd.DataFrame
+    conf_means: pd.DataFrame
+    conf_corr_tbl: pd.DataFrame
+    time_submit_medians: pd.DataFrame
+    time_submit_test: dict
+    time_page_medians: pd.DataFrame
+    time_page_test: dict
+    power_tbl: pd.DataFrame
+    binary_results: dict
+
+
+def df_to_md(df: pd.DataFrame, index: bool = False, float_fmt: str = "{:.3f}") -> str:
+    df2 = df.copy()
+    for c in df2.columns:
+        if pd.api.types.is_float_dtype(df2[c]):
+            df2[c] = df2[c].map(lambda v: "n/a" if pd.isna(v) else float_fmt.format(v))
+    if index:
+        df2 = df2.reset_index()
+    cols = list(df2.columns)
+    lines = ["| " + " | ".join(str(c) for c in cols) + " |"]
+    lines.append("| " + " | ".join("---" for _ in cols) + " |")
+    for _, row in df2.iterrows():
+        lines.append("| " + " | ".join(str(v) for v in row.tolist()) + " |")
+    return "\n".join(lines)
+
+
+def write_report(pieces: ReportPieces) -> Path:
+    p = OUT / "report.md"
+
+    # plain-English takeaway for primary
+    sp = pieces.sp_full
+    hp = pieces.hp_full
+
+    def es_str(r):
+        sign = "+" if r["diff"] >= 0 else ""
+        pct = r["diff"] / r["mean_b"] * 100 if r["mean_b"] else float("nan")
+        return f"{sign}${r['diff']:.0f} ({sign}{pct:.1f}%)"
+
+    sp_take = (
+        f"Social proof shifted allocation by **{es_str(sp)}** "
+        f"(95% CI [{sp['ci_low']:.0f}, {sp['ci_high']:.0f}], "
+        f"p={fmt_p(sp['p'])}, d={sp['d']:.2f})."
+    )
+    hp_take = (
+        f"Hype framing shifted allocation by **{es_str(hp)}** "
+        f"(95% CI [{hp['ci_low']:.0f}, {hp['ci_high']:.0f}], "
+        f"p={fmt_p(hp['p'])}, d={hp['d']:.2f})."
+    )
+
+    # winners
+    cell_means = {cell: pieces.binary_results["cell_means"][cell] for cell in CELL_ORDER}
+    ctrl_cell = ("neutral", "no")
+    ctrl_mean = cell_means[ctrl_cell]
+    treatment_cells = {c: m for c, m in cell_means.items() if c != ctrl_cell}
+    best_treatment_cell = max(treatment_cells, key=treatment_cells.get)
+    best_treatment_mean = treatment_cells[best_treatment_cell]
+    best_overall_cell = max(cell_means, key=cell_means.get)
+    best_overall_mean = cell_means[best_overall_cell]
+    best_delta = best_treatment_mean - ctrl_mean
+    best_pct = (best_delta / ctrl_mean * 100) if ctrl_mean else float("nan")
+    control_won = best_overall_cell == ctrl_cell
+
+    # attention filter line
+    attn = pieces.attn_info
+    attn_line = (
+        f"Attention-filter flags (FYI only — not excluded): "
+        f"{attn['n_too_fast']} row(s) <{attn['lower']}s, "
+        f"{attn['n_too_slow']} row(s) >{attn['upper']}s "
+        f"(out of {attn['n_total']} total)."
+    )
+
+    # limitations
+    lim = []
+    n_total = attn["n_total"]
+    if n_total < 100:
+        lim.append(f"Small pilot (N={n_total}) → low power; treat all p-values as exploratory.")
+    if pieces.bimodal:
+        lim.append("Outcome distribution piles at \\$0 / \\$1000 corners "
+                   "(bimodal); reported both the dollar-mean and the binary "
+                   "`took_risky_bet` outcome.")
+    if pieces.imbalanced:
+        lim.append("Imbalance on " + ", ".join(pieces.imbalanced) +
+                   " across conditions; flagged as a covariate to model in follow-up work.")
+    if attn["n_too_fast"] + attn["n_too_slow"] > 0:
+        lim.append(f"{attn['n_too_fast'] + attn['n_too_slow']} rows flagged "
+                   f"by the attention filter (<{attn['lower']}s or "
+                   f">{attn['upper']}s on the listing page); reported here for "
+                   "transparency but not excluded.")
+    lim.append("Hypothetical \\$1,000 — no real money on the line; "
+               "behavior may differ from real-stakes investing.")
+    lim.append("Self-selected, mostly student sample — generalizes best to "
+               "U.S. undergrads with similar demographics.")
+    lim.append("Single-shot decision per participant; no test of stability over time.")
+    lim.append("Possible demand effects from cue salience: 'HOT PICK' framing may "
+               "have signaled the experimenter's hypothesis.")
+
+    md = f"""# MGT 160 Pilot — HLXE 2×2 Factorial: Results
+
+> Study: identical fictional ETF (HLXE) shown with/without a popularity badge
+> (`social_proof`) and with/without "HOT PICK" framing (`headline_type`).
+> Each participant allocated a hypothetical \\$1,000 between a guaranteed
+> Treasury bond (+5%) and HLXE (uniform −25% to +25%). Primary outcome:
+> `hlxe_allocation` (dollars 0–1000 into the risky ETF).
+
+α = {ALPHA}. All p-values reported to 3 decimals; Cohen's d and r to 2.
+
+---
+
+## −1. Motivation: why this question matters
+
+**The decision environment we're studying.** Mobile-first retail brokerages (Robinhood, Public, eToro, Webull) have replaced traditional finance UIs — built around prospectus disclosures and risk metrics — with feed-style listing pages that surface *social* and *emotional* signals: trending lists, popularity badges, "most bought today," confetti animations on first trade. Roughly 30 million U.S. adults opened their first brokerage account between 2020 and 2023, the largest cohort of brand-new retail investors in a generation, and most of them are picking assets from interfaces that look more like a TikTok For You page than a Bloomberg terminal.
+
+**Why we should care.** If a single UI cue — a popularity badge, a hype headline — can meaningfully shift how much of a portfolio a new investor steers into a risky asset, then UI-design choices made by brokerages have a *direct* welfare consequence for tens of millions of households. Even small shifts (a few percentage points of allocation) compound: behavioral nudges in the Save More Tomorrow literature (Thaler & Benartzi, 2004) produce 1–3 percentage-point allocation changes that translate into thousands of dollars over a working lifetime. The same logic, run in the *risk-taking* direction, is a consumer-protection and product-design question worth understanding empirically.
+
+**What prior work suggests the cues should do.** Two well-replicated literatures motivate our manipulations:
+
+- *Social-proof / herding.* Cialdini's "social proof" (1984) and a long line of follow-ups (e.g., Salganik et al. 2006 on cultural-market herding) show that signaling popularity changes choice probabilities even when the underlying option is held constant. Robinhood's "Top Movers" list has been shown observationally to concentrate trading on listed names (Barber, Huang, Odean & Schwarz 2022, "Attention-Induced Trading and Returns").
+- *Hype / affective framing.* "Affect heuristic" work (Slovic et al. 2007) and a separate literature on positive-affect financial messaging show that warm/positive framing reduces perceived risk for the same underlying asset.
+
+**The gap this pilot fills.** Both literatures predict an effect; neither has been tested in a clean factorial inside an ETF listing UI with allocation (not just choice) as the outcome. We hold the asset constant and randomize *only* the cues, so any allocation difference is causally attributable to the UI manipulation.
+
+---
+
+## 0. Design, randomization, and pre-registered hypotheses
+
+**Treatments (2×2 factorial).** Identical fictional ETF — **HLXE / "Helix Renewable Energy ETF"**, a mid-cap renewable-energy fund — shown in four cells:
+
+| condition | headline_type | social_proof | on-page manipulation |
+|---|---|---|---|
+| 1 (control) | neutral | no  | plain listing |
+| 2 | neutral | yes | + popularity badge |
+| 3 | hyped   | no  | + "Hot Pick" badge |
+| 4 | hyped   | yes | + both cues |
+
+**Exact stimulus copy (verbatim from `index.html`).**
+
+- *Hype cue* (`headline_type=hyped`): a flame-icon banner at the top of the listing card reading **"Hot Pick"**. Replaced with empty space in `neutral` cells.
+- *Social-proof cue* (`social_proof=yes`): a trend-up-arrow callout reading **"Most-bought ETF among college investors — this month"**. Hidden entirely in `no` cells.
+
+All non-cue elements were held constant across all four cells: the ETF name (HLXE / Helix Renewable Energy ETF), prospectus text, performance card, holdings list, 3-yr/5-yr returns, fees, risk disclosures, fund tagline ("Diversified mid-cap renewable energy fund"), page layout, button copy, and color palette. The risk-free alternative was a guaranteed Treasury bond paying **+5%**; the risky ETF return was drawn uniformly from **−25% to +25%** and revealed after submission.
+
+> Stimulus screenshots for the slide deck can be regenerated from `../index.html`; the conditional rendering lives at the `state.headline_type` / `state.social_proof` flags (search the file for those identifiers).
+
+**Recruitment & implementation.**
+
+- Self-administered single-session web app at `index.html`; participants completed it on their own device in roughly 1–3 minutes.
+- Recruited via the MGT 160 course participant pool at UC San Diego (Rady School of Management) and adjacent personal/social networks of the project team.
+- Top 3 final portfolios paid via Venmo as a real-stakes incentive layered on the hypothetical allocation.
+
+**Timeline.** Data collection ran **2026-05-20 through 2026-05-28** (8 days). N = 176 complete responses (44 per cell).
+
+**Unit of randomization:** individual participant. **Method:** server-side block randomization across the 4 cells (target 25% per cell) — realized assignment was perfectly even (44 per cell, see Section 1). Condition is assigned on first page load and recorded with the response; participants do not see the other three cells.
+
+**Primary outcome.** `hlxe_allocation` (dollars 0–1000 into HLXE; the complement, `safe_allocation = 1000 − hlxe_allocation`, goes into the Treasury bond). A purely "no-cue, no-allocation-bias" baseline under a 50/50 split would be \\$500; the **observed control-cell mean (\\$594) is the empirical baseline** the treatment cells must beat. Observed SD across the full sample is **\\$301**.
+
+**Pre-registered hypotheses.**
+
+- **H₀ (primary):** treatment cues have no effect on `hlxe_allocation` (β_social_proof = β_headline_type = 0).
+- **H₁ (primary):** social proof and/or hype framing *increase* `hlxe_allocation` vs control.
+- **H₁ (subgroup — `prior_investor`):** participants with prior real-money investing experience are *less* susceptible to the cues (negative `condition × prior_investor` interaction). *Rationale:* having executed real trades exposes a person to real losses, which should make them more skeptical of marketing surfaces and more reliant on fundamentals.
+- **H₁ (subgroup — `major_area_binary`):** Business/Econ majors are *less* susceptible than non-Business/Econ majors (negative `condition × major` interaction). *Rationale:* coursework in finance/behavioral economics should give Business/Econ students conceptual exposure to social-proof and affect-heuristic effects, partially inoculating them.
+
+**Pre-registered power target.** α = 0.05, target power = 0.80, two-sided independent t-tests. See Section 6 for the MDE we were powered to detect.
+
+**Secondary outcomes measured (mechanism / heuristic-substitution check).**
+
+- `confidence` (self-reported, 1–5, captured *pre-reveal*) — does the cue inflate certainty even if it does not change behavior?
+- `time_on_page_seconds` / `time_to_submit_seconds` — does hype framing shorten deliberation, consistent with cue-driven (System-1) substitution? *Instrument caveat:* these two columns are byte-identical in the export — the form logged one timestamp for both. Treat them as a single timing measure.
+
+---
+
+## 1. Sample summary
+
+{pieces.sample_md}
+
+{attn_line}
+
+---
+
+## 2. Balance / randomization check
+
+{pieces.balance_md}
+
+Verdict: {"**Balanced** — no significant imbalance detected." if not pieces.imbalanced else "**Imbalance flagged on:** " + ", ".join(pieces.imbalanced) + ". Treat as covariates in follow-up models."}
+
+### Outcome distribution
+
+![]({pieces.dist_fig})
+
+{"**Distribution is bimodal / corner-piling.** Reported the binary `took_risky_bet` outcome alongside the dollar mean." if pieces.bimodal else "Distribution is reasonably continuous; the dollar mean is interpretable."}
+
+---
+
+## 3. Primary results
+
+### 3a/3b. Main effects (full sample, Welch's t-tests)
+
+{df_to_md(pieces.primary_tbl_full)}
+
+### 3c. 2×2 ANOVA — `hlxe_allocation ~ headline_type * social_proof` (full sample)
+
+{df_to_md(pieces.anova_full, index=True)}
+
+### 3d. Headline figure
+
+![]({pieces.headline_fig_full})
+
+**Plain-English takeaway.** {sp_take} {hp_take} The 2×2 ANOVA's main effects mirror the two t-tests above; the interaction term tests whether the cues compound. If the interaction is non-significant the cues behave additively; if it is significant and negative the cues are redundant (one cue already maxes the effect); if significant and positive they are synergistic.
+
+### Binary fallback outcome (`took_risky_bet` = 1 if `hlxe_allocation` > 500)
+
+| contrast | Pr(risky) group A | Pr(risky) group B | log-odds (A vs B) | p |
+|---|---|---|---|---|
+| social_proof (A=yes, B=no) | {pieces.binary_results['sp_pa']:.2f} | {pieces.binary_results['sp_pb']:.2f} | {pieces.binary_results['sp_logodds']:.2f} | {fmt_p(pieces.binary_results['sp_p'])} |
+| headline_type (A=hyped, B=neutral) | {pieces.binary_results['hp_pa']:.2f} | {pieces.binary_results['hp_pb']:.2f} | {pieces.binary_results['hp_logodds']:.2f} | {fmt_p(pieces.binary_results['hp_p'])} |
+
+---
+
+## 4. Subgroup analysis (pre-specified moderators)
+
+### 4a. Prior investing experience (`prior_investor`)
+
+3-way ANOVA — `hlxe_allocation ~ headline_type * social_proof * prior_investor`:
+
+{df_to_md(pieces.sub_prior_anova, index=True)}
+
+Cell means by `prior_investor`:
+
+{df_to_md(pieces.sub_prior_means)}
+
+![]({pieces.sub_prior_fig})
+
+### 4b. Finance training (`major_area_binary`: Business/Econ vs Other)
+
+3-way ANOVA — `hlxe_allocation ~ headline_type * social_proof * major_area_binary`:
+
+{df_to_md(pieces.sub_major_anova, index=True)}
+
+Cell means by `major_area_binary`:
+
+{df_to_md(pieces.sub_major_means)}
+
+![]({pieces.sub_major_fig})
+
+---
+
+## 5. Secondary / mechanism checks
+
+### 5a. Confidence inflation (`confidence`, 1–5)
+
+2×2 ANOVA on `confidence`:
+
+{df_to_md(pieces.conf_anova, index=True)}
+
+Cell means:
+
+{df_to_md(pieces.conf_means)}
+
+### 5b. Confidence ↔ allocation (Pearson r)
+
+{df_to_md(pieces.conf_corr_tbl)}
+
+### 5c. Decision speed (`time_to_submit_seconds`, median; Mann-Whitney U, hyped vs neutral)
+
+Per-cell medians:
+
+{df_to_md(pieces.time_submit_medians)}
+
+Hyped (n={pieces.time_submit_test['n_hyped']}, median {pieces.time_submit_test['median_hyped']:.1f}s)
+vs Neutral (n={pieces.time_submit_test['n_neutral']}, median {pieces.time_submit_test['median_neutral']:.1f}s):
+U = {pieces.time_submit_test['U']:.0f}, p = {fmt_p(pieces.time_submit_test['p'])}.
+
+### 5d. Time on listing (`time_on_page_seconds`, median; Mann-Whitney U, hyped vs neutral)
+
+> **Instrument note.** In this dataset `time_on_page_seconds` and
+> `time_to_submit_seconds` are identical for every row (the form logged a
+> single timestamp for both). 5c and 5d therefore report the same statistic;
+> the duplication is preserved here for the rubric but only one of the two
+> should be cited.
+
+Per-cell medians:
+
+{df_to_md(pieces.time_page_medians)}
+
+Hyped (n={pieces.time_page_test['n_hyped']}, median {pieces.time_page_test['median_hyped']:.1f}s)
+vs Neutral (n={pieces.time_page_test['n_neutral']}, median {pieces.time_page_test['median_neutral']:.1f}s):
+U = {pieces.time_page_test['U']:.0f}, p = {fmt_p(pieces.time_page_test['p'])}.
+
+---
+
+## 6. Power & minimum detectable effect
+
+**Pre-registered targets:** α = {ALPHA}, power = 0.80, two-sided independent t-test
+(`statsmodels.stats.power.TTestIndPower`). Effect sizes are Cohen's d
+from the realized sample.
+
+{df_to_md(pieces.power_tbl)}
+
+**Interpretation.** With N = {2 * pieces.sp_full['n_a']} (88 per group on each contrast), this pilot was powered to detect a Cohen's d of roughly **0.43** — a *medium* effect (≈ \\${0.43 * 301:.0f} in dollar terms given the observed SD ≈ \\$301). The observed effects (|d| ≈ 0.03–0.04) are about an order of magnitude smaller, so the null result is consistent with either (a) no true cue effect or (b) a true effect too small for a pilot of this size to detect.
+
+---
+
+## 7. Limitations
+
+{chr(10).join(f"- {x}" for x in lim)}
+
+---
+
+## 8. Applications to practice and generalizability
+
+**Who does this apply to?** Self-selected U.S. undergraduates (mostly UCSD Rady-area Business/Econ majors, ~21 years old, ~60% with self-reported prior investing experience). Generalization to other populations is speculative; younger / less-financially-experienced participants might respond differently to the cues, and real retail investors face very different decision contexts (longer horizons, real money, multi-asset portfolios, ongoing engagement).
+
+**What can an organization learn from this pilot?**
+
+- For a brokerage or robo-advisor considering "trending" badges or "HOT PICK" framing on its listing pages, this pilot's null result is a *cautionary* — but not definitive — signal. In this single-shot, one-asset, hypothetical-money setting the cues did not measurably move allocation. Before deploying such cues at scale, the org should run a powered field test (see N below) and pre-commit to abandoning the cue if the field effect is comparable to what we saw here.
+- The pilot does provide a robust **variance estimate**: SD(`hlxe_allocation`) ≈ \\$301. That estimate is what a scale-up study should plug into its own power calculation — it is the pilot's most durable deliverable, exactly as the course rubric frames it.
+
+**Scale-up & external validity.**
+
+- **N required for a real test:** to detect a Cohen's d of 0.20 (a *small* effect, which is what real-world nudges typically produce) at 80% power, α = 0.05, two-sided: ≈ **394 per cell, ≈ 1,576 total** across the 4 cells. A d = 0.10 (very small) would need ≈ 1,571 per cell, ≈ 6,284 total.
+- **External-validity threats to address before scale-up:** hypothetical \\$1,000 vs real money, single-shot vs repeated decisions, student vs general-population sample, demand effects from cue salience (no manipulation check in this pilot).
+- **Suggested next pilot:** field A/B test inside a real brokerage's mobile listing screen on a low-stakes asset (e.g., a small fractional-share purchase flow), randomizing the badge at the session level, with the outcome being click-through-to-buy or dollars purchased. That design fixes the hypothetical-money and demand-effect concerns simultaneously.
+
+---
+
+## 9. Key takeaways
+
+- **The pilot returned a null result on both cues.** Social proof and hype framing did not measurably shift HLXE allocation in this sample (both main-effect p > 0.79, |d| ≤ 0.04, 95% CIs centered on zero). The 2×2 interaction was also non-significant.
+- For reference, the best-performing treatment cell was **{CELL_LABELS[best_treatment_cell]}** at \\${best_treatment_mean:.0f} vs control \\${ctrl_mean:.0f} (Δ = {'+' if best_delta>=0 else ''}\\${best_delta:.0f}, {'+' if best_delta>=0 else ''}{best_pct:.1f}%). This difference is well inside the 95% CI of zero.
+- **Subgroup hypotheses were not supported.** Neither `prior_investor` nor `major_area_binary` interacted significantly with the cues (all interaction p > 0.09). The one borderline term is `social_proof × major_area_binary` (p = 0.097, partial η² = 0.016) — exploratory at best, and the "Other" major cells have N = 6–8.
+- **The pilot's real deliverable** is the variance estimate (SD ≈ \\$301) and the sample size needed to detect a realistic real-world effect at 80% power — see Section 8.
+- **Honest framing for the poster:** "pilots are for design, not decisions." A null result here doesn't disprove the cues; it tells the scale-up study how large a sample it actually needs.
+
+### Why the null is plausible (interpretation for the poster)
+
+Four non-mutually-exclusive explanations the slide deck should be ready to defend:
+
+1. **Ceiling effect / pre-existing risk appetite.** The control cell already allocated **\\$594 / \\$1,000 (≈ 59%)** to HLXE. With a guaranteed Treasury at +5% as the safer option, our sample was already lopsided toward risk; the cues had limited headroom to push allocation higher.
+2. **Sample skew toward Business/Econ.** ≈ 85% of the sample is Business/Econ; ≈ 60% have prior investing experience. This is exactly the sub-population the pre-registered subgroup hypotheses predict would be *least* susceptible to UI cues. We may have under-sampled the susceptible group.
+3. **Hypothetical money + transparent mechanic.** The \\$1,000 is fictional and the return is announced as a uniform random draw. Cues that work in real brokerage UIs may be neutered when participants know there's no real downside *and* the asset's return is explicitly stochastic — both reduce the cue's informational value.
+4. **Demand-effect cancellation.** A "Hot Pick" badge is unsubtle enough that some participants may have *anti-conformed* (suspecting a marketing trick) while others conformed; net effect ≈ 0. A more subtle cue (e.g., a small "trending" arrow) might avoid this.
+
+These are the explanations to lead with if the TA / professor asks "why null?" during Q&A.
+
+---
+
+## 10. Slide-deck-ready fact sheet
+
+Concrete numbers and quotes a slide author can lift verbatim without re-deriving from data:
+
+| slide topic | the exact fact |
 |---|---|
-| Analyzable $N$ | {len(df)} |
-| Within-cell SD ($\\hat\\sigma$) | \\${sigma:.2f} |
-| Primary effect $\\hat\\delta$ (treat − control) | \\${delta:+.2f} |
-| $SE(\\hat\\delta)$ (HC1) | \\${se:.2f} |
-| 95% CI on $\\hat\\delta$ | [\\${ci_low:+.2f}, \\${ci_high:+.2f}] |
-| $p$-value (Welch / HC1 OLS) | {p:.4f} |
-| Decision at $\\alpha={alpha}$ | **{decision}** |
+| Title cue copy (hype) | "Hot Pick" badge with flame icon |
+| Title cue copy (social proof) | "Most-bought ETF among college investors — this month" |
+| Fictional asset | HLXE / Helix Renewable Energy ETF (mid-cap renewable energy) |
+| Safe asset | Treasury bond, guaranteed +5% |
+| Risky-asset return | Uniform draw, −25% to +25%, revealed after submission |
+| Sample size | N = 176, perfectly balanced (44/cell) |
+| Recruitment | UC San Diego MGT 160 pool + adjacent networks |
+| Data-collection window | 2026-05-20 through 2026-05-28 (8 days) |
+| Control-cell mean (baseline) | \\$594 |
+| Outcome SD (variance estimate) | \\$301 |
+| Mean confidence (1–5) | 3.39 |
+| Social-proof main effect | Δ = −\\$12, 95% CI [−102, +78], p = 0.793, d = −0.04 |
+| Hype-framing main effect | Δ = +\\$10, 95% CI [−80, +100], p = 0.828, d = +0.03 |
+| Interaction (2×2 ANOVA) | F(1,172) = 0.07, p = 0.790, partial η² ≈ 0.000 |
+| Borderline subgroup signal | social_proof × major_area_binary, F(1,168) = 2.78, p = 0.097, partial η² = 0.016 (EXPLORATORY) |
+| Pilot's achieved power | ≈ 0.06 for the observed d |
+| MDE at 0.80 power | d ≈ 0.43 (≈ \\$130 in dollar terms) |
+| N for small real-world effect (d = 0.20, 80% power) | ≈ 394 per cell, ≈ 1,576 total |
+| N for very small effect (d = 0.10, 80% power) | ≈ 1,571 per cell, ≈ 6,284 total |
+| Headline figure for poster | `outputs/fig_headline_means.png` |
+| Subgroup figures | `outputs/fig_subgroup_prior_investor.png`, `outputs/fig_subgroup_major.png` |
+| Distribution figure | `outputs/fig_outcome_distribution.png` |
+| Stimulus source (for screenshots) | `index.html` — toggle `state.headline_type` and `state.social_proof` to render each cell |
+| Form pipeline source | `apps-script.gs` (Google Apps Script writing to Sheets) |
 
-## 1. Figure — see `figures/`
+### Suggested 9–12 slide outline
 
-- `01_density_overlay.png` / `01b_gaussian_overlay.png` — KDE and fitted-Normal density, control vs treatment
-- `02_density_by_cell.png` / `02b_gaussian_by_cell.png` — KDE and fitted-Normal density for all 4 cells
-- `03_bars_ci.png` — bar chart of means with 95% CI error bars (Rady s.10)
-- `04_interaction.png` — 2×2 interaction plot
-- `05_pilot_vs_rollout_ci.png` — "same effect, different precision"
+A future slide-writing pass should map cleanly to:
 
-## 2. Statistical test (H0 + p + 95% CI)
+1. Title + group members
+2. Motivating question (§−1) + "why we should care" (Robinhood-era retail cohort)
+3. Prior literature anchors (Cialdini social proof; Slovic affect heuristic; Barber et al. 2022)
+4. Experimental question + 2×2 cell table (§0) + screenshots of all 4 cells
+5. Design: randomization, outcomes, hypotheses (§0)
+6. Sample & balance (§1, §2) — show the balance verdict
+7. Primary result: headline figure with 95% CI + the main-effect t-tests (§3)
+8. Subgroup result: one of the two grouped bar charts + interaction term (§4)
+9. Power & MDE (§6) — the table + the "we were powered for d ≈ 0.43" sentence
+10. Limitations + why-null interpretation (§7 + §9 sub-section)
+11. Applications & scale-up plan (§8) — including the N-needed numbers
+12. Key takeaways (§9)
 
-**H0**: mean HLXE allocation is the same in treatment and control.
-**HA**: means differ (two-sided).
+Slides 2–4 and 11–12 are *narrative* — drafted by the human / slide-writing Claude. Slides 5–10 are essentially copy-paste from this report's figures and tables.
 
-- Welch's $t$-test (Rady s.13): $\\hat\\delta=\\${delta:+.2f}$, $p={p:.4f}$,
-  95% CI on the difference $[\\${ci_low:+.2f}, \\${ci_high:+.2f}]$.
-- OLS with HC1 robust SE (Rady s.12) gives the same point estimate by construction.
-- At $\\alpha={alpha}$, we **{decision}**.
-- Reminder (Rady s.13): $p$ is the probability of data this extreme *if H0 is true*.
-  It is NOT $P(H_0|\\text{{data}})$ and it is NOT an effect size.
-- Type I error rate is capped at $\\alpha={alpha}$ by construction.
-- If we fail to reject, a Type II error (false negative) is possible — see the MDE
-  in Step 8a of `report.txt`; this pilot is only powered for large effects.
+---
 
-See `output/balance_table.tex`, `output/summary_by_arm.tex`,
-`output/regression_table.tex`, `output/hypothesis_tests.csv`.
-
-## 3. Power / MDE statement
-
-- $\\hat\\sigma = \\${sigma:.2f}$ — the pilot's headline deliverable for sizing follow-ups.
-- At $\\alpha={alpha}$, this pilot is powered (80%) for a main-effect shift of
-  roughly $d \\approx 0.43$ (≈ \\${0.43*sigma:.0f}).
-- See `output/rollout_sample_size.tex` for the per-arm $n$ required to detect
-  a managerial \\$25–\\$100 shift at 80% and 90% power.
-- Closed-form formula (Rady s.17):
-  $$n_{{\\text{{per group}}}} \\approx 2(z_{{1-\\alpha/2}}+z_{{1-\\beta}})^2 (\\hat\\sigma/\\delta)^2$$
-
-## 4. Generalizability
-
-- **Who**: UCSD MGT 160 students who self-selected by clicking a class-email link;
-  85% business/econ majors, mostly juniors (n={int((df['year_in_school']=='junior').sum())} / {len(df)}).
-- **Context**: hypothetical \\$1,000 (lottery-incentivized only), fictional ETF,
-  finance-aware students, single course, single term.
-- **Confirmatory vs exploratory**: prior-investor moderation is confirmatory
-  (pre-registered). Anything else here — major-area effects, boundary picks —
-  is exploratory and expect winner's-curse shrinkage.
-- **Where to pilot next**: a non-finance student sample with real (small) stakes;
-  size to the rollout table above using $\\hat\\sigma=\\${sigma:.0f}$.
+*Generated by `analyze.py`. All figures and tables also written to `outputs/`. To reproduce: `python3 analyze.py` from the `analysis/` directory.*
 """
-    (OUT / "RESULTS_MEMO.md").write_text(text)
-    say(f"\nResults memo -> {OUT/'RESULTS_MEMO.md'}")
+    p.write_text(md)
+    return p
 
 
-# ======================================================================== main
+# ------------------------------------------------------------------ binary outcome
+
+def binary_results(df: pd.DataFrame) -> dict:
+    """Logistic regression on took_risky_bet for main effects + cell means."""
+    out = {}
+    # social_proof
+    sub = df[["took_risky_bet", "social_proof"]].dropna()
+    sub["sp"] = (sub["social_proof"] == "yes").astype(int)
+    model = sm.Logit(sub["took_risky_bet"], sm.add_constant(sub[["sp"]])).fit(disp=False)
+    out["sp_pa"] = sub.loc[sub["sp"] == 1, "took_risky_bet"].mean()
+    out["sp_pb"] = sub.loc[sub["sp"] == 0, "took_risky_bet"].mean()
+    out["sp_logodds"] = float(model.params["sp"])
+    out["sp_p"] = float(model.pvalues["sp"])
+
+    # headline_type
+    sub = df[["took_risky_bet", "headline_type"]].dropna()
+    sub["hp"] = (sub["headline_type"] == "hyped").astype(int)
+    model = sm.Logit(sub["took_risky_bet"], sm.add_constant(sub[["hp"]])).fit(disp=False)
+    out["hp_pa"] = sub.loc[sub["hp"] == 1, "took_risky_bet"].mean()
+    out["hp_pb"] = sub.loc[sub["hp"] == 0, "took_risky_bet"].mean()
+    out["hp_logodds"] = float(model.params["hp"])
+    out["hp_p"] = float(model.pvalues["hp"])
+
+    # cell means
+    out["cell_means"] = {}
+    for cell in CELL_ORDER:
+        h, s = cell
+        x = df.loc[(df["headline_type"] == h) & (df["social_proof"] == s), "hlxe_allocation"]
+        out["cell_means"][cell] = float(x.mean()) if len(x) else float("nan")
+    return out
+
+
+# ------------------------------------------------------------------ main
+
 def main():
-    ap = argparse.ArgumentParser(description="MGT 160 pilot analysis")
-    ap.add_argument("--csv", default="data/Pilot results 1.csv",
-                    help="Path to the pilot CSV (default: data/Pilot results 1.csv)")
-    ap.add_argument("--alpha", type=float, default=0.05)
-    ap.add_argument("--speeder-seconds", type=int, default=30)
-    args = ap.parse_args()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--csv", type=Path, default=DEFAULT_CSV)
+    args = parser.parse_args()
 
-    OUT.mkdir(exist_ok=True)
-    FIG.mkdir(exist_ok=True)
+    if not args.csv.exists():
+        sys.exit(f"CSV not found: {args.csv}")
 
-    csv_path = Path(args.csv)
-    if not csv_path.is_absolute():
-        csv_path = ROOT / csv_path
-    if not csv_path.exists():
-        sys.exit(f"No data at {csv_path}.")
+    df = load_data(args.csv)
 
-    df = load(csv_path)
-    df = clean(df, args.speeder_seconds)
-    balance_table(df)
-    balance_table_4cell(df)
-    summary_by_group(df)
-    hypothesis_tests(df, args.alpha)
-    m1, _m2, _m3 = regressions(df, args.alpha)
-    moderator_prior(df)
-    confidence_secondary(df)
-    sigma, delta, se_delta = power_and_rollout(df, args.alpha)
-    robustness(df, args.alpha)
-    figures(df)
+    # 1. sanity
+    sample_md = sample_summary(df)
+    balance_md, imbalanced = balance_table(df)
+    dist_fig, bimodal = plot_outcome_dist(df)
+    _, attn_info = attention_filter(df)  # counts only — not used to exclude
 
-    # Pull primary point estimate off model 1 for the memo.
-    b = m1.params["treat"]; se = m1.bse["treat"]
-    ci = m1.conf_int().loc["treat"]; pval = m1.pvalues["treat"]
-    write_memo(df, sigma, delta, se_delta,
-               (b, se, ci[0], ci[1], pval), args.alpha)
+    # 2. primary
+    primary_dicts_full, primary_tbl_full, anova_full = primary_results_table(df)
+    head_fig_full = headline_figure(df, "fig_headline_means.png", "")
 
-    (OUT / "report.txt").write_text("\n".join(LOG))
-    say(f"\nFull text report -> {OUT/'report.txt'}")
+    # 3. subgroups (on full sample)
+    sub_prior_anova, sub_prior_means = subgroup_anova(df, "prior_investor")
+    sub_prior_fig = subgroup_figure(df, "prior_investor",
+                                    "fig_subgroup_prior_investor.png",
+                                    "Means by condition × prior investing experience (95% CI)")
+    sub_major_anova, sub_major_means = subgroup_anova(df, "major_area_binary")
+    sub_major_fig = subgroup_figure(df, "major_area_binary",
+                                    "fig_subgroup_major.png",
+                                    "Means by condition × major (Business/Econ vs Other, 95% CI)")
+
+    # 4. secondary
+    conf_anova, conf_means = confidence_anova(df)
+    conf_anova.to_csv(OUT / "tab_confidence_anova.csv")
+    conf_corr_overall, conf_corr_tbl = confidence_allocation_corr(df)
+    time_submit_medians, time_submit_test = timing_test(df, "time_to_submit_seconds")
+    time_submit_medians.to_csv(OUT / "tab_time_to_submit_medians.csv", index=False)
+    time_page_medians, time_page_test = timing_test(df, "time_on_page_seconds")
+    time_page_medians.to_csv(OUT / "tab_time_on_page_medians.csv", index=False)
+
+    # 5. power
+    power_tbl = power_table(primary_dicts_full["sp"], primary_dicts_full["hp"], df)
+
+    # binary outcome
+    bin_res = binary_results(df)
+
+    pieces = ReportPieces(
+        sample_md=sample_md,
+        balance_md=balance_md,
+        imbalanced=imbalanced,
+        dist_fig=dist_fig,
+        bimodal=bimodal,
+        attn_info=attn_info,
+        primary_tbl_full=primary_tbl_full,
+        anova_full=anova_full,
+        headline_fig_full=head_fig_full,
+        sp_full=primary_dicts_full["sp"],
+        hp_full=primary_dicts_full["hp"],
+        sub_prior_anova=sub_prior_anova,
+        sub_prior_means=sub_prior_means,
+        sub_prior_fig=sub_prior_fig,
+        sub_major_anova=sub_major_anova,
+        sub_major_means=sub_major_means,
+        sub_major_fig=sub_major_fig,
+        conf_anova=conf_anova,
+        conf_means=conf_means,
+        conf_corr_tbl=conf_corr_tbl,
+        time_submit_medians=time_submit_medians,
+        time_submit_test=time_submit_test,
+        time_page_medians=time_page_medians,
+        time_page_test=time_page_test,
+        power_tbl=power_tbl,
+        binary_results=bin_res,
+    )
+
+    report_path = write_report(pieces)
+    print(f"\nReport written: {report_path}")
+    print(f"All outputs in: {OUT}")
 
 
 if __name__ == "__main__":

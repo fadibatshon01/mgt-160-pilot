@@ -1,0 +1,6 @@
+variable,test,statistic,p
+age (mean),one-way ANOVA,F=0.97,0.407
+gender,chi-squared,"stat=4.66, dof=6",0.589
+year_in_school,chi-squared,"stat=19.83, dof=15",0.179
+major_area,chi-squared,"stat=5.49, dof=12",0.939
+prior_investor,chi-squared,"stat=0.38, dof=3",0.945
